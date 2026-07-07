@@ -224,7 +224,7 @@ function buildHoldings(state, prices, meta, dividendBySymbol) {
       
       return {
         symbol, name: h.name, shares: h.shares, avgCost: h.avgCost, current, marketValue, cost, upl, uplPct,
-        sector: m.sector || '', strategy: m.strategy || '', stopLoss, targetPrice,
+        sector: m.sector || '', strategy: m.strategy || '', stopLoss, targetPrice, note: m.note || '',
         isStopHit, isStopNear, isTargetHit, isTargetNear, isWarning: isStopHit,
         dividendTotal, dividendYield,
       };
@@ -355,9 +355,22 @@ export default function App() {
     };
     initAuth();
 
+    // 讀取本地保險
+    const savedUser = localStorage.getItem('eveMoneyUser');
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+      setIsCloudReady(true);
+    }
+
     const unsubscribe = onAuthStateChanged(auth, u => {
       setUser(u);
       setIsCloudReady(!!u);
+      // 寫入本地保險
+      if (u) {
+        localStorage.setItem('eveMoneyUser', JSON.stringify({ uid: u.uid, email: u.email }));
+      } else {
+        localStorage.removeItem('eveMoneyUser');
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -1480,6 +1493,7 @@ function Holdings({ holdings, priceDraft, setPriceDraft, updatePrice, updateMeta
                 <th className="tsp-right">未實現損益</th>
                 <th className="th-category">分類設定</th>
                 <th className="th-alerts">停損/獲利提醒</th>
+                <th>自訂備註</th>
               </tr>
             </thead>
             <tbody>
@@ -1542,6 +1556,15 @@ function Holdings({ holdings, priceDraft, setPriceDraft, updatePrice, updateMeta
                       </div>
                     </div>
                   </td>
+                  <td>
+                  <textarea 
+                    className="tsp-input tsp-input-sm" 
+                    style={{ minHeight: '60px', width: '150px', resize: 'vertical' }}
+                    placeholder="點此輸入備註..." 
+                    defaultValue={h.note} 
+                    onBlur={e => updateMeta(h.symbol, { note: e.target.value })} 
+                  />
+                </td>
                 </tr>
               ))}
             </tbody>
