@@ -15,7 +15,6 @@ import { getFirestore, doc, setDoc, getDoc, onSnapshot } from 'firebase/firestor
 
 let app, auth, db, appId;
 try {
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyACwAj7n2SzBYLyLuu2AYR5aj2ba0XyTBQ",
   authDomain: "eve-fish.firebaseapp.com",
@@ -91,77 +90,6 @@ function Tag({ text }) {
     <span style={{ backgroundColor: bg, color: c, border: `1px solid ${border}`, padding: '2px 6px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', whiteSpace: 'nowrap', display: 'inline-block' }}>
       {text}
     </span>
-  );
-}
-
-function MetaInput({ val, options, placeholder, onSave }) {
-  const [isCustom, setIsCustom] = useState(false);
-  const [v, setV] = useState(val || '');
-
-  useEffect(() => {
-    if (!isCustom) setV(val || '');
-  }, [val, isCustom]);
-
-  if (isCustom) {
-    return (
-      <input 
-        className="tsp-input tsp-input-sm" 
-        autoFocus 
-        placeholder={`請輸入${placeholder}...`}
-        value={v} 
-        onChange={e => setV(e.target.value)} 
-        onBlur={() => { onSave(v); setIsCustom(false); }}
-        onKeyDown={e => { if(e.key === 'Enter') e.target.blur(); }}
-      />
-    );
-  }
-
-  return (
-    <select 
-      className="tsp-input tsp-input-sm tsp-select" 
-      value={options.includes(v) ? v : (v ? 'custom_hidden' : '')} 
-      onChange={e => {
-        if (e.target.value === '___custom___') {
-          setIsCustom(true);
-          setV('');
-        } else if (e.target.value !== 'custom_hidden') {
-          setV(e.target.value);
-          onSave(e.target.value);
-        }
-      }}
-    >
-      <option value="">選擇{placeholder}...</option>
-      {options.map(o => <option key={o} value={o}>{o}</option>)}
-      {v && !options.includes(v) && <option value="custom_hidden">{v}</option>}
-      <option value="___custom___">✏️ 自行輸入...</option>
-    </select>
-  );
-}
-
-function BlurInput({ val, placeholder, onSave }) {
-  const [v, setV] = useState(val || '');
-  const [isFocused, setIsFocused] = useState(false);
-  
-  useEffect(() => { 
-    if (!isFocused) setV(val || ''); 
-  }, [val, isFocused]);
-
-  return (
-    <input
-      className="tsp-input tsp-input-sm tsp-mono"
-      placeholder={placeholder}
-      type="number"
-      step="0.01"
-      value={v}
-      onFocus={() => setIsFocused(true)}
-      onChange={e => setV(e.target.value)}
-      onBlur={() => {
-        setIsFocused(false);
-        const numVal = v ? cleanNum(Number(v)) : null;
-        if (numVal !== val) onSave(numVal);
-      }}
-      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
-    />
   );
 }
 
@@ -257,7 +185,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   
   const [transactions, setTransactions] = useState([]);
-  const [cashTransactions, setCashTransactions] = useState([]); // 新增：現金帳戶明細
+  const [cashTransactions, setCashTransactions] = useState([]); 
   const [prices, setPrices] = useState({});
   const [meta, setMeta] = useState({});
   const [dividends, setDividends] = useState([]);
@@ -270,7 +198,7 @@ export default function App() {
   
   // Modals
   const [showForm, setShowForm] = useState(false);
-  const [showCashForm, setShowCashForm] = useState(false); // 新增：出入金表單
+  const [showCashForm, setShowCashForm] = useState(false); 
   const [showBatchForm, setShowBatchForm] = useState(false);
   const [showDividendForm, setShowDividendForm] = useState(false);
   
@@ -286,7 +214,6 @@ export default function App() {
   const [sectorFilter, setSectorFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 交易表單新增了 tax
   const [form, setForm] = useState({ date: todayStr(), symbol: '', name: '', type: 'buy', shares: '', price: '', fee: '', tax: '', owner: '我', note: '' });
   const [divForm, setDivForm] = useState({ date: todayStr(), symbol: '', name: '', shares: '', cashPerShare: '', stockPerShare: '', owner: '我', note: '' });
   const [cashForm, setCashForm] = useState({ date: todayStr(), type: 'deposit', amount: '', owner: '我', note: '' });
@@ -312,7 +239,7 @@ export default function App() {
       { id: 'holdings', label: '持股' },
       { id: 'txns', label: '交易紀錄' },
       { id: 'dividends', label: '股利' },
-      { id: 'cash', label: '現金明細' }, // 新增：現金明細 Tab
+      { id: 'cash', label: '現金明細' }, 
       { id: 'charts', label: '圖表' },
       { id: 'monthly', label: '月度統整' },
     ];
@@ -326,20 +253,27 @@ export default function App() {
     const fetchOfficialData = async () => {
       const map = {};
       try {
+        // 🚀 核心修正：升級為 2026 證交所全新不塞車的收盤 Open Data 清單 API
         const [twseRes, tpexRes] = await Promise.all([
-          fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL').catch(() => null),
+          fetch('https://openapi.twse.com.tw/v1/opendata/t187ap03_L').catch(() => null),
           fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes').catch(() => null)
         ]);
         if (twseRes?.ok) {
           const data = await twseRes.json();
-          data.forEach(d => { map[d.Code] = { name: d.Name, price: Number(d.ClosingPrice) }; });
+          data.forEach(d => { 
+            if (d.stock_id) map[d.stock_id] = { name: d.stock_name, price: Number(d.closing_price) }; 
+          });
         }
         if (tpexRes?.ok) {
           const data = await tpexRes.json();
-          data.forEach(d => { map[d.SecuritiesCompanyCode] = { name: d.CompanyName, price: Number(d.Close) }; });
+          data.forEach(d => { 
+            if (d.SecuritiesCompanyCode) map[d.SecuritiesCompanyCode] = { name: d.CompanyName, price: Number(d.Close || d.ClosingPrice) }; 
+          });
         }
         setOfficialMapCache(map);
-      } catch (e) {}
+      } catch (e) {
+        console.error("加載官方總表失敗", e);
+      }
     };
     fetchOfficialData();
 
@@ -355,7 +289,6 @@ export default function App() {
     };
     initAuth();
 
-    // 讀取本地保險
     const savedUser = localStorage.getItem('eveMoneyUser');
     if (savedUser) {
       setUser(JSON.parse(savedUser));
@@ -365,7 +298,6 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, u => {
       setUser(u);
       setIsCloudReady(!!u);
-      // 寫入本地保險
       if (u) {
         localStorage.setItem('eveMoneyUser', JSON.stringify({ uid: u.uid, email: u.email }));
       } else {
@@ -387,7 +319,7 @@ export default function App() {
       if (snapshot.exists()) {
         const data = snapshot.data();
         setTransactions(data.transactions || []);
-        setCashTransactions(data.cashTransactions || []); // Sync cash
+        setCashTransactions(data.cashTransactions || []); 
         setPrices(data.prices || {});
         setMeta(data.meta || {});
         setDividends(data.dividends || []);
@@ -536,23 +468,21 @@ export default function App() {
     const fallbackMap = { ...officialMapCache };
     try {
       const [twseRes, tpexRes] = await Promise.all([
-        fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL').catch(() => null),
+        fetch('https://openapi.twse.com.tw/v1/opendata/t187ap03_L').catch(() => null),
         fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes').catch(() => null)
       ]);
       if (twseRes?.ok) {
         const data = await twseRes.json();
-        data.forEach(d => { fallbackMap[d.Code] = Number(d.ClosingPrice); });
+        data.forEach(d => { if (d.stock_id) fallbackMap[d.stock_id] = Number(d.closing_price); });
       }
       if (tpexRes?.ok) {
         const data = await tpexRes.json();
-        data.forEach(d => { fallbackMap[d.SecuritiesCompanyCode] = Number(d.Close); });
+        data.forEach(d => { if (d.SecuritiesCompanyCode) fallbackMap[d.SecuritiesCompanyCode] = Number(d.Close || d.ClosingPrice); });
       }
-      setOfficialMapCache(fallbackMap);
     } catch(e) {}
 
     const fetchPromises = allSymbols.map(async (sym) => {
       let finalPrice = null;
-
       try {
         const twUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}.TW?range=1d`;
         const twoUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}.TWO?range=1d`;
@@ -571,7 +501,7 @@ export default function App() {
       if (finalPrice) {
         realtimeCount++;
       } else if (fallbackMap[sym]) {
-        finalPrice = fallbackMap[sym];
+        finalPrice = typeof fallbackMap[sym] === 'object' ? fallbackMap[sym].price : fallbackMap[sym];
         fallbackCount++;
       }
 
@@ -603,7 +533,6 @@ export default function App() {
     showToast(`${symbol} 歷史資料抓取與 ATR 計算中...`);
     
     let highs = [], lows = [], closes = [];
-
     try {
       const d = new Date();
       d.setDate(d.getDate() - 40);
@@ -705,12 +634,9 @@ export default function App() {
   const divBySymbol = useMemo(() => dividendsBySymbol(filteredDividends), [filteredDividends]);
   const holdingsAll = useMemo(() => buildHoldings(holdingsState, prices, meta, divBySymbol), [holdingsState, prices, meta, divBySymbol]);
 
-  // 動態計算戶頭可用餘額
   const totalCashBalance = useMemo(() => {
     let bal = 0;
-    // 1. 入金/出金
     filteredCashTxns.forEach(c => bal += c.type === 'deposit' ? Number(c.amount) : -Number(c.amount));
-    // 2. 買賣股
     filteredTxns.forEach(t => {
       const cost = (Number(t.shares) * Number(t.price));
       const fee = Number(t.fee) || 0;
@@ -718,7 +644,6 @@ export default function App() {
       if (t.type === 'buy') bal -= (cost + fee + tax);
       else bal += (cost - fee - tax);
     });
-    // 3. 股利
     filteredDividends.forEach(d => bal += Number(d.totalCash || 0));
     return cleanNum(bal);
   }, [filteredCashTxns, filteredTxns, filteredDividends]);
@@ -877,6 +802,51 @@ export default function App() {
     });
   }
 
+  // 🚀 2026 終極高速本地模糊名冊查找線路（絕不卡死、免去外部 Proxy 依賴）
+  async function handleNameBlur(isDiv = false) {
+    const currentName = isDiv ? divForm.name : form.name;
+    const currentSymbol = isDiv ? divForm.symbol : form.symbol;
+    const cleanName = currentName.trim();
+    
+    if (cleanName.length >= 2 && !currentSymbol) {
+      setIsLookingUpName(true);
+      let fetchedSymbol = '';
+
+      // 1. 本地精準與模糊查找（直接翻找剛下載好的官方名冊）
+      const cachedEntry = Object.entries(officialMapCache).find(([sym, data]) => data && data.name === cleanName);
+      if (cachedEntry) {
+        fetchedSymbol = cachedEntry[0];
+      } 
+      // 2. 如果官方總表還沒下載完，改用內建基本庫兜底
+      else if (userStockMap.nameToSym[cleanName]) {
+        fetchedSymbol = userStockMap.nameToSym[cleanName];
+      }
+      // 3. 如果是美股或其它標的，再嘗試極速抓取
+      else {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5秒超時保險
+          const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(cleanName)}&quotesCount=1`;
+          const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          const data = await res.json();
+          if (data.quotes && data.quotes.length > 0) {
+            let rawSymbol = data.quotes[0].symbol;
+            fetchedSymbol = (rawSymbol.includes('.TW') || rawSymbol.includes('.TWO')) ? rawSymbol.split('.')[0] : rawSymbol;
+          }
+        } catch (e) {
+          console.log("外部備援查詢跳過或超時");
+        }
+      }
+
+      if (fetchedSymbol) {
+        const setter = isDiv ? setDivForm : setForm;
+        setter(f => ({ ...f, symbol: fetchedSymbol }));
+      }
+      setIsLookingUpName(false);
+    }
+  }
+
   function resetForm() {
     setEditingTxnId(null);
     setForm({ date: todayStr(), symbol: '', name: '', type: 'buy', shares: '', price: '', fee: '', tax: '', owner: (selectedOwner !== 'all' ? selectedOwner : owners[0]) || '我', note: '' });
@@ -894,12 +864,8 @@ export default function App() {
     const shares = Number(form.shares) || 0;
     const price = Number(form.price) || 0;
     const total = shares * price;
-    
-    // 台股公定手續費率 0.1425% (無條件捨去)
     const fee = Math.floor(total * 0.001425);
-    // 台股賣出交易稅 0.3% (無條件捨去)
     const tax = form.type === 'sell' ? Math.floor(total * 0.003) : 0;
-    
     setForm(f => ({ ...f, fee: String(fee), tax: String(tax) }));
     showToast('已自動帶入公定手續費與交易稅，可手動微調(如券商折扣)。');
   }
@@ -1008,48 +974,6 @@ export default function App() {
     else hist.push({ date: today, price: val });
     persistPrices({ ...prices, [symbol]: { current: val, history: hist } });
     setPriceDraft(d => ({ ...d, [symbol]: '' }));
-  }
-
-  function submitBatchPrices(e) {
-    e.preventDefault();
-    const today = todayStr();
-    const next = { ...prices };
-    let updated = 0;
-    for (const raw of batchPriceText.split('\n')) {
-      const line = raw.trim();
-      if (!line) continue;
-      const parts = line.split(/[\s,、]+/).filter(Boolean);
-      if (parts.length < 2) continue;
-      const symbol = parts[0].trim().toUpperCase();
-      const val = cleanNum(Number(parts[1]));
-      if (!symbol || !val || val <= 0) continue;
-      const entry = next[symbol] || { current: val, history: [] };
-      const hist = [...(entry.history || [])];
-      if (hist.length && hist[hist.length - 1].date === today) hist[hist.length - 1] = { date: today, price: val };
-      else hist.push({ date: today, price: val });
-      next[symbol] = { current: val, history: hist };
-      updated += 1;
-    }
-    if (updated > 0) persistPrices(next);
-    setBatchPriceText('');
-    setShowBatchForm(false);
-  }
-
-  function updateMeta(symbol, patch) { 
-    persistMeta({ ...meta, [symbol]: { ...(meta[symbol] || {}), ...patch } }); 
-  }
-
-  function addOwner() {
-    const name = ownerInput.trim();
-    if (!name || owners.includes(name)) { setOwnerInput(''); setShowOwnerForm(false); return; }
-    const next = [...owners, name];
-    persistOwners(next);
-    setSelectedOwner(name);
-    setForm(f => ({ ...f, owner: name }));
-    setDivForm(f => ({ ...f, owner: name }));
-    setCashForm(f => ({ ...f, owner: name }));
-    setOwnerInput('');
-    setShowOwnerForm(false);
   }
 
   const tickerItems = holdingsAll.length ? holdingsAll : null;
@@ -1235,985 +1159,4 @@ export default function App() {
             <form onSubmit={submitTxn} className="tsp-form">
               {!editingTxnId && <p className="tsp-hint">輸入代號並點擊其他地方，會自動獲取股票名稱。</p>}
               <div className="tsp-type-toggle">
-                <button type="button" className={form.type === 'buy' ? 'active tsp-up-bg' : ''} onClick={() => setForm(f => ({ ...f, type: 'buy', tax: '0' }))}>買進 / 匯入</button>
-                <button type="button" className={form.type === 'sell' ? 'active tsp-down-bg' : ''} onClick={() => setForm(f => ({ ...f, type: 'sell' }))}>賣出</button>
-              </div>
-              <div className="tsp-form-row">
-                <label>日期<input type="date" className="tsp-input" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} required /></label>
-                <label>持有者
-                  <select className="tsp-input" value={form.owner} onChange={e => setForm(f => ({ ...f, owner: e.target.value }))}>
-                    {owners.map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </label>
-              </div>
-              <div className="tsp-form-row">
-                <label>
-                  股票代號
-                  <div style={{position: 'relative'}}>
-                    <input className="tsp-input" autoComplete="off" placeholder="2330" value={form.symbol} onChange={e => handleSymbolChange(e.target.value, false)} onBlur={() => handleSymbolBlur(false)} required />
-                    {isLookingUpName && <RefreshCw size={14} className="tsp-spin tsp-muted" style={{position: 'absolute', right: 10, top: 12}} />}
-                  </div>
-                </label>
-                <label>股票名稱<input className="tsp-input" autoComplete="off" placeholder="台積電" value={form.name} onChange={e => handleNameChange(e.target.value, false)} required/></label>
-              </div>
-              <div className="tsp-form-row">
-                <label>股數<input type="number" min="0" step="1" className="tsp-input tsp-mono" placeholder="1000" value={form.shares} onChange={e => setForm(f => ({ ...f, shares: e.target.value }))} required /></label>
-                <label>成交價 (配股填 0)<input type="number" min="0" step="0.01" className="tsp-input tsp-mono" placeholder="600" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} required /></label>
-              </div>
-
-              {/* 稅費區塊 */}
-              <div style={{ background: 'var(--bg)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold' }}>券商手續費與交易稅金</span>
-                  <button type="button" className="tsp-btn" style={{ padding: '4px 8px', fontSize: '12px', minHeight: '28px' }} onClick={autoCalculateTax}><Wand2 size={12} /> 自動試算</button>
-                </div>
-                <div className="tsp-form-row">
-                  <label>手續費<input type="number" min="0" step="1" className="tsp-input tsp-mono" placeholder="0" value={form.fee} onChange={e => setForm(f => ({ ...f, fee: e.target.value }))} /></label>
-                  <label>交易稅(證交稅)<input type="number" min="0" step="1" className="tsp-input tsp-mono" placeholder="0" value={form.tax} onChange={e => setForm(f => ({ ...f, tax: e.target.value }))} disabled={form.type==='buy'} title={form.type==='buy'?"買進無須交易稅":""} /></label>
-                </div>
-              </div>
-
-              <label>交易筆記（買進/賣出理由）<input type="text" autoComplete="off" className="tsp-input" placeholder="例如：看好Q3法說會展望 / 停損換股..." value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></label>
-              
-              <div style={{ background: 'var(--panel-2)', padding: '12px', borderRadius: '8px', fontSize: '13px', color: 'var(--text)', display: 'flex', justifyContent: 'space-between' }}>
-                <span className="tsp-muted">此筆預估收付總額：</span>
-                <b className="tsp-mono">
-                  {form.type === 'buy' ? '-' : '+'}
-                  {money(cleanNum((Number(form.shares||0) * Number(form.price||0)) + (form.type === 'buy' ? (Number(form.fee||0) + Number(form.tax||0)) : -(Number(form.fee||0) + Number(form.tax||0)))))}
-                </b>
-              </div>
-
-              <button type="submit" className="tsp-btn tsp-btn-primary tsp-form-submit"><Save size={16} /> 儲存交易</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 股利表單 */}
-      {showDividendForm && (
-        <div className="tsp-modal-backdrop" onClick={() => { setShowDividendForm(false); resetDivForm(); }}>
-          <div className="tsp-modal" onClick={e => e.stopPropagation()}>
-            <div className="tsp-modal-head">
-              <h3>{editingDivId ? '✏️ 編輯股利紀錄' : '💰 新增股利紀錄'}</h3>
-              <button type="button" className="tsp-icon-btn" onClick={() => { setShowDividendForm(false); resetDivForm(); }}><X size={18} /></button>
-            </div>
-            <form onSubmit={submitDividend} className="tsp-form">
-              <div className="tsp-form-row">
-                <label>發放日期<input type="date" className="tsp-input" value={divForm.date} onChange={e => setDivForm(f => ({ ...f, date: e.target.value }))} required /></label>
-                <label>持有者
-                  <select className="tsp-input" value={divForm.owner} onChange={e => setDivForm(f => ({ ...f, owner: e.target.value }))}>
-                    {owners.map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </label>
-              </div>
-              <div className="tsp-form-row">
-                <label>
-                  股票代號
-                  <div style={{position: 'relative'}}>
-                    <input className="tsp-input" autoComplete="off" placeholder="2330" value={divForm.symbol} onChange={e => handleSymbolChange(e.target.value, true)} onBlur={() => handleSymbolBlur(true)} required />
-                    {isLookingUpName && <RefreshCw size={14} className="tsp-spin tsp-muted" style={{position: 'absolute', right: 10, top: 12}} />}
-                  </div>
-                </label>
-                <label>股票名稱<input className="tsp-input" autoComplete="off" placeholder="台積電" value={divForm.name} onChange={e => handleNameChange(e.target.value, true)} required /></label>
-              </div>
-              <div className="tsp-form-row">
-                <label>參與配息股數<input type="number" min="0" step="1" className="tsp-input tsp-mono" placeholder="1000" value={divForm.shares} onChange={e => setDivForm(f => ({ ...f, shares: e.target.value }))} required /></label>
-                <label>現金股利／股<input type="number" min="0" step="0.01" className="tsp-input tsp-mono" placeholder="2.5" value={divForm.cashPerShare} onChange={e => setDivForm(f => ({ ...f, cashPerShare: e.target.value }))} /></label>
-              </div>
-              <label>股票股利／股（選填）<input type="number" min="0" step="0.001" className="tsp-input tsp-mono" placeholder="0" value={divForm.stockPerShare} onChange={e => setDivForm(f => ({ ...f, stockPerShare: e.target.value }))} /></label>
-              <label>備註（選填）<input className="tsp-input" autoComplete="off" value={divForm.note} onChange={e => setDivForm(f => ({ ...f, note: e.target.value }))} /></label>
-              <p className="tsp-hint">現金股利金額 = 股數 × 每股現金股利 = {money(cleanNum((Number(divForm.shares) || 0) * (Number(divForm.cashPerShare) || 0)))}</p>
-              <button type="submit" className="tsp-btn tsp-btn-primary tsp-form-submit"><Save size={16} /> 儲存股利紀錄</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 現金明細表單 */}
-      {showCashForm && (
-        <div className="tsp-modal-backdrop" onClick={() => { setShowCashForm(false); resetCashForm(); }}>
-          <div className="tsp-modal" onClick={e => e.stopPropagation()}>
-            <div className="tsp-modal-head">
-              <h3>{editingCashId ? '✏️ 編輯現金明細' : '💳 新增入金 / 出金'}</h3>
-              <button type="button" className="tsp-icon-btn" onClick={() => { setShowCashForm(false); resetCashForm(); }}><X size={18} /></button>
-            </div>
-            <form onSubmit={submitCash} className="tsp-form">
-              <p className="tsp-hint">將您的資金匯入或匯出證券戶頭，系統會自動幫您結算剩餘可用資金。</p>
-              <div className="tsp-type-toggle">
-                <button type="button" className={cashForm.type === 'deposit' ? 'active tsp-up-bg' : ''} onClick={() => setCashForm(f => ({ ...f, type: 'deposit' }))}>入金 (匯入帳戶)</button>
-                <button type="button" className={cashForm.type === 'withdraw' ? 'active tsp-down-bg' : ''} onClick={() => setCashForm(f => ({ ...f, type: 'withdraw' }))}>出金 (匯出帳戶)</button>
-              </div>
-              <div className="tsp-form-row">
-                <label>日期<input type="date" className="tsp-input" value={cashForm.date} onChange={e => setCashForm(f => ({ ...f, date: e.target.value }))} required /></label>
-                <label>帳戶所有者
-                  <select className="tsp-input" value={cashForm.owner} onChange={e => setCashForm(f => ({ ...f, owner: e.target.value }))}>
-                    {owners.map(o => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </label>
-              </div>
-              <label>金額 (台幣)<input type="number" min="1" step="1" className="tsp-input tsp-mono" placeholder="50000" value={cashForm.amount} onChange={e => setCashForm(f => ({ ...f, amount: e.target.value }))} required autoFocus /></label>
-              <label>備註（選填）<input className="tsp-input" autoComplete="off" placeholder="例如：領薪水投入、年底提款買車..." value={cashForm.note} onChange={e => setCashForm(f => ({ ...f, note: e.target.value }))} /></label>
-              <button type="submit" className="tsp-btn tsp-btn-primary tsp-form-submit"><Save size={16} /> 儲存資金紀錄</button>
-            </form>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// -------------------------------------------------------------
-// UI Components
-// -------------------------------------------------------------
-function StatCard({ label, value, sub, tone }) {
-  return (
-    <div className="tsp-card tsp-stat">
-      <span className="tsp-stat-label">{label}</span>
-      <span className={`tsp-stat-value tsp-mono ${tone || ''}`}>{value}</span>
-      {sub && <span className={`tsp-stat-sub tsp-mono ${tone || ''}`}>{sub}</span>}
-    </div>
-  );
-}
-
-function GroupToggle({ groupMode, setGroupMode }) {
-  return (
-    <div className="tsp-toggle-group">
-      {[['symbol', '股票'], ['sector', '產業'], ['strategy', '策略']].map(([k, l]) => (
-        <button key={k} className={groupMode === k ? 'active' : ''} onClick={() => setGroupMode(k)}>{l}</button>
-      ))}
-    </div>
-  );
-}
-
-function Empty({ text }) {
-  return <div className="tsp-empty">{text}</div>;
-}
-
-function AllocationPie({ holdings, meta, groupMode, totalMarketValue }) {
-  const data = groupHoldings(holdings, meta, groupMode).sort((a,b) => b.value - a.value);
-  if (!data.length) return <Empty text="尚無持股資料，新增交易後這裡會顯示資產配置圖" />;
-  return (
-    <div className="tsp-pie-wrap">
-      <ResponsiveContainer width="100%" height={260}>
-        <PieChart>
-          <Pie data={data} dataKey="value" nameKey="name" innerRadius={55} outerRadius={95} paddingAngle={2}>
-            {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} stroke="var(--panel)" strokeWidth={2} />)}
-          </Pie>
-          <Tooltip formatter={(v) => money(v)} contentStyle={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="tsp-legend">
-        {data.map((p, i) => (
-          <div key={i} className="tsp-legend-item">
-            <span className="tsp-dot" style={{ background: PALETTE[i % PALETTE.length] }} />
-            <span>{p.name}</span>
-            <span className="tsp-mono tsp-muted">{fmt2((p.value / (totalMarketValue || 1)) * 100)}%</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Dashboard({ totals, holdings, meta, groupMode, setGroupMode, alerts }) {
-  return (
-    <div className="tsp-dashboard">
-      <div className="tsp-stats-grid">
-        <StatCard label="總資產 (市值 + 餘額)" value={money(totals.totalMarketValue + totals.totalCashBalance)} />
-        <StatCard label="持股總市值" value={money(totals.totalMarketValue)} />
-        <StatCard label="戶頭可用餘額" value={money(totals.totalCashBalance)} tone={totals.totalCashBalance < 0 ? 'tsp-down' : ''} />
-        <StatCard label="未實現損益" value={(totals.totalUPL > 0 ? '+' : '') + money(totals.totalUPL)} sub={pct(totals.totalUPLPct)} tone={changeCls(totals.totalUPL)} />
-        <StatCard label="已實現損益" value={(totals.totalRealized > 0 ? '+' : '') + money(totals.totalRealized)} tone={changeCls(totals.totalRealized)} />
-        <StatCard label="累計股利" value={money(totals.totalDividend)} tone="tsp-up" />
-      </div>
-      
-      <div className="tsp-dashboard-bottom">
-        <div className="tsp-card tsp-panel">
-          <div className="tsp-panel-head">
-            <h3>資產配置</h3>
-            <GroupToggle groupMode={groupMode} setGroupMode={setGroupMode} />
-          </div>
-          <AllocationPie holdings={holdings} meta={meta} groupMode={groupMode} totalMarketValue={totals.totalMarketValue} />
-        </div>
-        
-        <div className="tsp-card tsp-panel">
-          <div className="tsp-panel-head">
-            <h3>股價提醒與風險通知</h3>
-          </div>
-          <div className="tsp-alerts-list">
-            {alerts.length === 0 ? (
-              <Empty text="目前沒有觸發任何通知 (可於持股設定防守價/目標價)" />
-            ) : (
-              alerts.map((a, i) => {
-                const Icon = a.icon;
-                return (
-                  <div key={i} className={`tsp-alert-item tsp-${a.tone}-bg`}>
-                    <Icon size={18} className={`tsp-${a.tone}`} />
-                    <span>{a.text}</span>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Holdings({ holdings, priceDraft, setPriceDraft, updatePrice, updateMeta, strategyFilter, setStrategyFilter, sectorFilter, setSectorFilter, sectorOptions, strategyOptions, searchQuery, setSearchQuery, onAtrCalculate }) {
-  return (
-    <div className="tsp-card">
-      <div className="tsp-filters" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: '150px' }}>
-          <Search size={14} className="tsp-muted" style={{ position: 'absolute', left: 10, top: 12 }} />
-          <input className="tsp-input" placeholder="搜尋代號或名稱..." style={{ paddingLeft: 32 }} value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-        </div>
-        <select className="tsp-input tsp-select" style={{ flex: 1, minWidth: '120px' }} value={sectorFilter} onChange={e => setSectorFilter(e.target.value)}>
-          <option value="all">所有產業</option>
-          {sectorOptions.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-        <select className="tsp-input tsp-select" style={{ flex: 1, minWidth: '120px' }} value={strategyFilter} onChange={e => setStrategyFilter(e.target.value)}>
-          <option value="all">所有策略</option>
-          {strategyOptions.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </div>
-      {!holdings.length ? (
-        <Empty text="找不到符合條件的持股" />
-      ) : (
-        <div className="tsp-table-wrap">
-          <table className="tsp-table">
-            <thead>
-              <tr>
-                <th>股票</th>
-                <th className="tsp-right">股數</th>
-                <th className="tsp-right">均價(含稅費)</th>
-                <th className="tsp-right">現價</th>
-                <th className="tsp-right">市值</th>
-                <th className="tsp-right">未實現損益</th>
-                <th className="th-category">分類設定</th>
-                <th className="th-alerts">停損/獲利提醒</th>
-                <th>自訂備註</th>
-              </tr>
-            </thead>
-            <tbody>
-              {holdings.map(h => (
-                <tr key={h.symbol} className={h.isWarning ? 'tsp-row-warn' : ''}>
-                  <td style={{ whiteSpace: 'normal', wordBreak: 'break-word', minWidth: '100px' }}>
-                    <div className="tsp-symbol">{h.symbol}</div>
-                    <div className="tsp-name tsp-muted">{h.name}</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', alignItems: 'flex-start' }}>
-                      <Tag text={h.sector} /> 
-                      <Tag text={h.strategy} />
-                    </div>
-                  </td>
-                  <td className="tsp-right tsp-mono">{fmtInt(h.shares)}</td>
-                  <td className="tsp-right tsp-mono">
-                    <div title="均價包含您輸入的手續費">{fmt2(h.avgCost)}</div>
-                  </td>
-                  <td className="tsp-right">
-                    <div className="tsp-price-input">
-                      <input className="tsp-input tsp-input-sm tsp-mono" placeholder={fmt2(h.current)}
-                        value={priceDraft[h.symbol] ?? ''} 
-                        onChange={e => setPriceDraft(d => ({...d, [h.symbol]: e.target.value}))}
-                        onKeyDown={e => e.key === 'Enter' && updatePrice(h.symbol)}
-                      />
-                      {(priceDraft[h.symbol] && Number(priceDraft[h.symbol]) > 0) && (
-                        <button className="tsp-icon-btn" onClick={() => updatePrice(h.symbol)}><Save size={14} /></button>
-                      )}
-                    </div>
-                  </td>
-                  <td className="tsp-right tsp-mono">{fmtInt(h.marketValue)}</td>
-                  <td className={`tsp-right tsp-mono ${changeCls(h.upl)}`}>
-                    <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
-                      <div>{h.upl > 0 ? '+' : ''}{fmtInt(h.upl)}</div>
-                      <div style={{ fontSize: 12 }}>{pct(h.uplPct)}</div>
-                    </div>
-                  </td>
-                  <td style={{ minWidth: '130px' }}>
-                    <div className="tsp-meta-inputs" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <MetaInput options={sectorOptions} placeholder="選擇或輸入產業" val={h.sector} onSave={(v) => updateMeta(h.symbol, { sector: v })} />
-                      <MetaInput options={strategyOptions} placeholder="選擇或輸入策略" val={h.strategy} onSave={(v) => updateMeta(h.symbol, { strategy: v })} />
-                    </div>
-                  </td>
-                  <td style={{ minWidth: '160px' }}>
-                    <div className="tsp-meta-inputs" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span className="tsp-muted" style={{ fontSize: '12px', fontWeight: 'bold', minWidth: '32px' }}>防守</span>
-                        <BlurInput val={h.stopLoss} placeholder="輸入防守價" onSave={(v) => updateMeta(h.symbol, { stopLoss: v })} />
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span className="tsp-muted" style={{ fontSize: '12px', fontWeight: 'bold', minWidth: '32px' }}>目標</span>
-                        <BlurInput val={h.targetPrice} placeholder="輸入目標價" onSave={(v) => updateMeta(h.symbol, { targetPrice: v })} />
-                      </div>
-                      <div style={{ display: 'flex', gap: '4px', marginTop: '2px' }}>
-                        <button type="button" className="tsp-btn" style={{ flex: 1, padding: '2px 4px', fontSize: '11px', justifyContent: 'center' }} onClick={() => updateMeta(h.symbol, { stopLoss: cleanNum(h.avgCost * 0.9), targetPrice: cleanNum(h.avgCost * 1.2) })} title="防守設為成本-10% / 目標設為成本+20%">
-                           ±10/20%
-                        </button>
-                        <button type="button" className="tsp-btn" style={{ flex: 1, padding: '2px 4px', fontSize: '11px', justifyContent: 'center' }} onClick={() => onAtrCalculate(h.symbol, h.current)} title="根據最近 14 天資料計算 ATR (防守設為現價 - 2×ATR)">
-                           ATR
-                        </button>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                  <textarea 
-                    className="tsp-input tsp-input-sm" 
-                    style={{ minHeight: '60px', width: '150px', resize: 'vertical' }}
-                    placeholder="點此輸入備註..." 
-                    defaultValue={h.note} 
-                    onBlur={e => updateMeta(h.symbol, { note: e.target.value })} 
-                  />
-                </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Transactions({ transactions, onEdit, onDelete, showOwner }) {
-  if (!transactions.length) return <Empty text="尚無交易紀錄，點擊右上角「新增交易」開始記錄" />;
-  const sorted = [...transactions].sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id);
-  
-  return (
-    <div className="tsp-card tsp-table-wrap">
-      <table className="tsp-table">
-        <thead>
-          <tr>
-            <th>日期</th>
-            <th>類型</th>
-            <th>股票</th>
-            <th className="tsp-right">股數</th>
-            <th className="tsp-right">成交價</th>
-            <th className="tsp-right">手續費</th>
-            <th className="tsp-right">交易稅</th>
-            <th className="tsp-right">總收付金額</th>
-            <th>交易筆記</th>
-            {showOwner && <th>持有者</th>}
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map(t => {
-            const cost = cleanNum((Number(t.shares) || 0) * (Number(t.price) || 0));
-            const fee = Number(t.fee) || 0;
-            const tax = Number(t.tax) || 0;
-            const total = t.type === 'buy' ? (cost + fee + tax) : (cost - fee - tax);
-            
-            return (
-              <tr key={t.id} className="tsp-clickable-row" onClick={() => onEdit(t)} title="點擊整行即可編輯此交易">
-                <td className="tsp-mono">{t.date}</td>
-                <td>
-                  <span className={`tsp-badge ${t.type === 'buy' ? 'tsp-up-bg tsp-up' : 'tsp-down-bg tsp-down'}`}>
-                    {t.type === 'buy' ? '買進' : '賣出'}
-                  </span>
-                </td>
-                <td>{t.symbol} {t.name}</td>
-                <td className="tsp-right tsp-mono">{fmtInt(t.shares)}</td>
-                <td className="tsp-right tsp-mono">{fmt2(t.price)}</td>
-                <td className="tsp-right tsp-mono">{fmtInt(fee)}</td>
-                <td className="tsp-right tsp-mono">{fmtInt(tax)}</td>
-                <td className={`tsp-right tsp-mono ${t.type === 'buy' ? 'tsp-down' : 'tsp-up'}`}>{t.type === 'buy' ? '-' : '+'}{fmtInt(total)}</td>
-                <td className="tsp-muted" style={{ maxWidth: 200, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.note || '-'}</td>
-                {showOwner && <td><Tag text={t.owner || '我'} /></td>}
-                <td onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'flex-end' }}>
-                  <button className="tsp-icon-btn tsp-danger" onClick={() => { if(window.confirm('確定刪除此交易？')) onDelete(t.id); }} title="刪除"><Trash2 size={16} /></button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function CashAccount({ cashTransactions, onEdit, onDelete, showOwner, totalCashBalance, onAdd }) {
-  const sorted = [...cashTransactions].sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id);
-  
-  return (
-    <div className="tsp-cash-view">
-      <div className="tsp-stats-grid" style={{ marginBottom: 16 }}>
-        <StatCard label="目前戶頭可用餘額" value={money(totalCashBalance)} tone={totalCashBalance < 0 ? 'tsp-down' : ''} />
-        <div className="tsp-card tsp-stat" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={onAdd}>
-          <Wallet size={24} className="tsp-primary" style={{ marginBottom: 8 }} />
-          <span className="tsp-stat-label">新增入金 / 出金紀錄</span>
-        </div>
-      </div>
-
-      <div className="tsp-card tsp-table-wrap">
-        <table className="tsp-table">
-          <thead>
-            <tr>
-              <th>日期</th>
-              <th>類型</th>
-              <th className="tsp-right">金額 (台幣)</th>
-              {showOwner && <th>帳戶所有者</th>}
-              <th>備註</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.length === 0 && <tr><td colSpan={6}><Empty text="尚無資金紀錄。新增入金讓您的戶頭餘額動起來吧！" /></td></tr>}
-            {sorted.map(c => (
-              <tr key={c.id} className="tsp-clickable-row" onClick={() => onEdit(c)} title="點擊整行編輯">
-                <td className="tsp-mono">{c.date}</td>
-                <td>
-                  <span className={`tsp-badge ${c.type === 'deposit' ? 'tsp-up-bg tsp-up' : 'tsp-down-bg tsp-down'}`}>
-                    {c.type === 'deposit' ? '入金' : '出金'}
-                  </span>
-                </td>
-                <td className={`tsp-right tsp-mono ${c.type === 'deposit' ? 'tsp-up' : 'tsp-down'}`}>
-                  {c.type === 'deposit' ? '+' : '-'}{fmtInt(c.amount)}
-                </td>
-                {showOwner && <td><Tag text={c.owner || '我'} /></td>}
-                <td className="tsp-muted">{c.note || '-'}</td>
-                <td onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'flex-end' }}>
-                  <button className="tsp-icon-btn tsp-danger" onClick={() => { if(window.confirm('確定刪除此紀錄？')) onDelete(c.id); }} title="刪除"><Trash2 size={16} /></button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function Dividends({ dividends, onEdit, onDelete, showOwner, yearlyDividends, onAdd, totalDividend, holdingsAll }) {
-  const sorted = [...dividends].sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id);
-  
-  return (
-    <div className="tsp-dividends-view">
-      <div className="tsp-stats-grid" style={{ marginBottom: 16 }}>
-        <StatCard label="累計領取股利" value={money(totalDividend)} tone="tsp-up" />
-        {yearlyDividends.slice(-3).map(y => (
-          <StatCard key={y.year} label={`${y.year}年 股利`} value={money(y.total)} tone="tsp-up" />
-        ))}
-        <div className="tsp-card tsp-stat" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={onAdd}>
-          <Plus size={24} className="tsp-primary" style={{ marginBottom: 8 }} />
-          <span className="tsp-stat-label">新增股利紀錄</span>
-        </div>
-      </div>
-
-      <div className="tsp-card tsp-table-wrap">
-        <table className="tsp-table">
-          <thead>
-            <tr>
-              <th>日期</th>
-              <th>股票</th>
-              <th className="tsp-right">配息股數</th>
-              <th className="tsp-right">現金股利/股</th>
-              <th className="tsp-right">股票股利/股</th>
-              <th className="tsp-right">總現金股利</th>
-              {showOwner && <th>持有者</th>}
-              <th>備註</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.length === 0 && <tr><td colSpan={9}><Empty text="尚無股利紀錄" /></td></tr>}
-            {sorted.map(d => (
-              <tr key={d.id} className="tsp-clickable-row" onClick={() => onEdit(d)} title="點擊整行即可編輯此股利">
-                <td className="tsp-mono">{d.date}</td>
-                <td>{d.symbol} {d.name}</td>
-                <td className="tsp-right tsp-mono">{fmtInt(d.shares)}</td>
-                <td className="tsp-right tsp-mono">{fmt2(d.cashPerShare)}</td>
-                <td className="tsp-right tsp-mono">{fmt2(d.stockPerShare)}</td>
-                <td className="tsp-right tsp-mono tsp-up">+{fmtInt(d.totalCash)}</td>
-                {showOwner && <td><Tag text={d.owner || '我'} /></td>}
-                <td className="tsp-muted">{d.note}</td>
-                <td onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'flex-end' }}>
-                  <button className="tsp-icon-btn tsp-danger" onClick={() => { if(window.confirm('確定刪除？')) onDelete(d.id); }} title="刪除"><Trash2 size={16} /></button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function Charts({ holdings, prices, meta, symbols, chartSymbol, setChartSymbol, groupMode, setGroupMode }) {
-  const currentSymbol = chartSymbol || (symbols.length > 0 ? symbols[0] : null);
-  
-  const historyData = useMemo(() => {
-    if (!currentSymbol || !prices[currentSymbol] || !prices[currentSymbol].history) return [];
-    return [...prices[currentSymbol].history].sort((a, b) => new Date(a.date) - new Date(b.date));
-  }, [currentSymbol, prices]);
-
-  const barData = groupHoldings(holdings, meta, groupMode).sort((a,b) => b.value - a.value);
-
-  const pnlData = useMemo(() => {
-    return holdings.map(h => ({ name: `${h.symbol} ${h.name}`, fullName: h.name, pnl: h.upl })).sort((a, b) => b.pnl - a.pnl);
-  }, [holdings]);
-
-  const currentHoldingAvgCost = useMemo(() => {
-    const h = holdings.find(x => x.symbol === currentSymbol);
-    return h ? h.avgCost : null;
-  }, [currentSymbol, holdings]);
-
-  return (
-    <div className="tsp-charts-view">
-      
-      <div className="tsp-card tsp-panel" style={{ marginBottom: 16 }}>
-        <div className="tsp-panel-head">
-          <h3>各股未實現損益排行榜</h3>
-        </div>
-        {pnlData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={pnlData} margin={{ top: 10, right: 10, left: 20, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
-              <YAxis stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
-              <Tooltip formatter={v => money(v)} labelFormatter={(label) => { const item = pnlData.find(d=>d.name===label); return item ? `${item.name} ${item.fullName}` : label; }} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-              <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
-                {pnlData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.pnl > 0 ? 'var(--up)' : 'var(--down)'} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : <Empty text="尚無持股" />}
-      </div>
-
-      <div className="tsp-card tsp-panel" style={{ marginBottom: 16 }}>
-        <div className="tsp-panel-head">
-          <h3>資產分佈長條圖</h3>
-          <GroupToggle groupMode={groupMode} setGroupMode={setGroupMode} />
-        </div>
-        {barData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={barData} margin={{ top: 10, right: 10, left: 20, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
-              <YAxis stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
-              <Tooltip formatter={v => money(v)} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-              <Bar dataKey="value" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : <Empty text="尚無持股" />}
-      </div>
-
-      <div className="tsp-card tsp-panel">
-        <div className="tsp-panel-head">
-          <h3>個股歷史股價紀錄</h3>
-          <select className="tsp-input tsp-select" style={{ width: 'auto' }} value={currentSymbol || ''} onChange={e => setChartSymbol(e.target.value)}>
-            {symbols.map(s => {
-               const holding = holdings.find(h => h.symbol === s);
-               const nameStr = holding ? ` ${holding.name}` : '';
-               return <option key={s} value={s}>{s}{nameStr}</option>;
-            })}
-          </select>
-        </div>
-        {historyData.length > 1 ? (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={historyData} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="date" stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
-              <YAxis domain={['auto', 'auto']} stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
-              <Tooltip contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-              <Line type="monotone" dataKey="price" stroke="var(--primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--primary)' }} activeDot={{ r: 6 }} name="收盤價" />
-              {currentHoldingAvgCost && (
-                <ReferenceLine y={currentHoldingAvgCost} stroke="var(--up)" strokeDasharray="5 5" label={{ position: 'top', value: '平均成本', fill: 'var(--up)', fontSize: 12 }} />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        ) : <Empty text="此股票無足夠的歷史股價紀錄 (需有兩筆以上)。請使用自動或批次更新累積歷史資料。" />}
-      </div>
-    </div>
-  );
-}
-
-function Monthly({ monthly }) {
-  const [expandedMonth, setExpandedMonth] = useState(null);
-
-  if (!monthly.length) return <Empty text="尚無月度統整資料" />;
-  
-  return (
-    <div className="tsp-card tsp-table-wrap">
-      <table className="tsp-table">
-        <thead>
-          <tr>
-            <th>月份</th>
-            <th className="tsp-right">交易次數</th>
-            <th className="tsp-right">買入總額</th>
-            <th className="tsp-right">賣出總額</th>
-            <th className="tsp-right">已實現損益</th>
-            <th className="tsp-right">領取股利</th>
-            <th className="tsp-right">月度淨現金流</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {monthly.map(m => {
-            const netFlow = m.sellAmt - m.buyAmt + m.dividend;
-            const isExpanded = expandedMonth === m.month;
-            return (
-              <React.Fragment key={m.month}>
-                <tr className="tsp-row-hover" style={{ cursor: 'pointer' }} onClick={() => setExpandedMonth(isExpanded ? null : m.month)}>
-                  <td className="tsp-mono"><b>{m.month}</b></td>
-                  <td className="tsp-right tsp-mono">{m.count}</td>
-                  <td className="tsp-right tsp-mono">{fmtInt(m.buyAmt)}</td>
-                  <td className="tsp-right tsp-mono">{fmtInt(m.sellAmt)}</td>
-                  <td className={`tsp-right tsp-mono ${changeCls(m.realizedPL)}`}>{m.realizedPL > 0 ? '+' : ''}{fmtInt(m.realizedPL)}</td>
-                  <td className="tsp-right tsp-mono tsp-up">{m.dividend > 0 ? `+${fmtInt(m.dividend)}` : 0}</td>
-                  <td className={`tsp-right tsp-mono ${changeCls(netFlow)}`}>{netFlow > 0 ? '+' : ''}{fmtInt(netFlow)}</td>
-                  <td className="tsp-right">
-                    <button className="tsp-icon-btn" style={{ marginLeft: 'auto' }}>
-                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </button>
-                  </td>
-                </tr>
-                {isExpanded && (
-                  <tr style={{ background: 'var(--panel-2)' }}>
-                    <td colSpan="8" style={{ padding: '16px 24px' }}>
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: 'var(--muted)' }}>📅 {m.month} 資金與交易明細</h4>
-                      <table className="tsp-table" style={{ background: 'var(--panel)', borderRadius: '8px', overflow: 'hidden' }}>
-                        <thead>
-                          <tr>
-                            <th>日期</th>
-                            <th>動作</th>
-                            <th>標的 / 項目</th>
-                            <th className="tsp-right">股數</th>
-                            <th className="tsp-right">成交價/配息</th>
-                            <th className="tsp-right">淨收付金額(含稅費)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {m.events.map((e, i) => (
-                            <tr key={i}>
-                              <td className="tsp-mono">{e.date}</td>
-                              <td>
-                                {e.isCash ? (
-                                  <span className={`tsp-badge ${e.type === 'deposit' ? 'tsp-up-bg tsp-up' : 'tsp-down-bg tsp-down'}`}>
-                                    {e.type === 'deposit' ? '入金' : '出金'}
-                                  </span>
-                                ) : e.isDiv ? (
-                                  <span className="tsp-badge tsp-up-bg tsp-up">領息</span>
-                                ) : e.type === 'buy' ? (
-                                  <span className="tsp-badge tsp-up-bg tsp-up">買進</span>
-                                ) : (
-                                  <span className="tsp-badge tsp-down-bg tsp-down">賣出</span>
-                                )}
-                              </td>
-                              <td>{e.isCash ? (e.note || '資金變動') : `${e.symbol} ${e.name}`}</td>
-                              <td className="tsp-right tsp-mono">{e.isCash ? '-' : fmtInt(e.shares)}</td>
-                              <td className="tsp-right tsp-mono">{e.isCash ? '-' : fmt2(e.isDiv ? e.cashPerShare : e.price)}</td>
-                              <td className="tsp-right tsp-mono">
-                                {e.isCash ? (
-                                  <span className={e.type === 'deposit' ? 'tsp-up' : 'tsp-down'}>{e.type === 'deposit' ? '+' : '-'}{fmtInt(e.amount)}</span>
-                                ) : e.isDiv ? (
-                                  <span className="tsp-up">+{fmtInt(e.totalCash)}</span>
-                                ) : e.type === 'buy' ? (
-                                  <span className="tsp-down">-{fmtInt(e.shares * e.price + (e.fee||0) + (e.tax||0))}</span>
-                                ) : (
-                                  <span className="tsp-up">+{fmtInt(e.shares * e.price - (e.fee||0) - (e.tax||0))}</span>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Compare({ data }) {
-  if (data.length <= 1) return <Empty text="需有多個持有者才能進行比較。請在右上方新增持有者。" />;
-  
-  return (
-    <div className="tsp-card tsp-table-wrap">
-      <table className="tsp-table">
-        <thead>
-          <tr>
-            <th>持有者</th>
-            <th className="tsp-right">持股檔數</th>
-            <th className="tsp-right">持股市值</th>
-            <th className="tsp-right">戶頭現金</th>
-            <th className="tsp-right">總資產</th>
-            <th className="tsp-right">總成本</th>
-            <th className="tsp-right">未實現損益</th>
-            <th className="tsp-right">已實現損益</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.sort((a, b) => b.marketValue - a.marketValue).map(d => {
-            const uplPct = d.cost > 0 ? (d.upl / d.cost) * 100 : 0;
-            return (
-              <tr key={d.owner}>
-                <td><Tag text={d.owner} /></td>
-                <td className="tsp-right tsp-mono">{d.holdingCount}</td>
-                <td className="tsp-right tsp-mono">{fmtInt(d.marketValue)}</td>
-                <td className="tsp-right tsp-mono">{fmtInt(d.cash)}</td>
-                <td className="tsp-right tsp-mono tsp-primary" style={{fontWeight: 'bold'}}>{fmtInt(d.marketValue + d.cash)}</td>
-                <td className="tsp-right tsp-mono">{fmtInt(d.cost)}</td>
-                <td className={`tsp-right tsp-mono ${changeCls(d.upl)}`}>
-                  <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}>
-                    <div>{d.upl > 0 ? '+' : ''}{fmtInt(d.upl)}</div>
-                    <div style={{ fontSize: 12 }}>{pct(uplPct)}</div>
-                  </div>
-                </td>
-                <td className={`tsp-right tsp-mono ${changeCls(d.realized)}`}>
-                  {d.realized > 0 ? '+' : ''}{fmtInt(d.realized)}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// -------------------------------------------------------------
-// CSS 樣式定義 
-// -------------------------------------------------------------
-const CSS = `
-:root {
-  --bg: #f3f4f6;
-  --panel: #ffffff;
-  --panel-2: #f9fafb;
-  --text: #1f2937;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --primary: #3b82f6;
-  --primary-hover: #2563eb;
-  --up: #ef4444; /* 台股紅漲 */
-  --down: #10b981; /* 台股綠跌 */
-  --up-bg: #fee2e2;
-  --down-bg: #d1fae5;
-  --warn: #f59e0b; 
-  --warn-bg: #fef3c7;
-  --radius: 12px;
-  --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111827;
-    --panel: #1f2937;
-    --panel-2: #374151;
-    --text: #f9fafb;
-    --muted: #9ca3af;
-    --border: #374151;
-    --primary: #3b82f6;
-    --up: #f87171; 
-    --down: #34d399;
-    --up-bg: rgba(248, 113, 113, 0.2);
-    --down-bg: rgba(52, 211, 153, 0.2);
-    --warn: #fbbf24;
-    --warn-bg: rgba(251, 191, 36, 0.15);
-    --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.3);
-  }
-}
-
-.tsp-app {
-  font-family: system-ui, -apple-system, sans-serif;
-  background-color: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  box-sizing: border-box;
-}
-
-.tsp-app * { box-sizing: inherit; }
-.tsp-mono { font-family: var(--font-mono); }
-.tsp-muted { color: var(--muted); }
-.tsp-up { color: var(--up); }
-.tsp-down { color: var(--down); }
-.tsp-flat { color: var(--muted); }
-.tsp-warn { color: var(--warn); }
-.tsp-up-bg { background-color: var(--up-bg); color: var(--up); }
-.tsp-down-bg { background-color: var(--down-bg); color: var(--down); }
-.tsp-warn-bg { background-color: var(--warn-bg); color: var(--warn); border: 1px solid rgba(245, 158, 11, 0.3); }
-.tsp-primary { color: var(--primary); }
-.tsp-danger { color: #ef4444; }
-
-.tsp-ticker {
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
-  overflow: hidden;
-  white-space: nowrap;
-  padding: 6px 0;
-  font-size: 13px;
-}
-.tsp-ticker-track {
-  display: inline-block;
-  animation: tsp-scroll 30s linear infinite;
-}
-.tsp-ticker-track:hover { animation-play-state: paused; }
-.tsp-ticker-item { margin-right: 32px; }
-@keyframes tsp-scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
-
-.tsp-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 24px 24px 16px 24px;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-.tsp-brand { display: flex; align-items: center; gap: 16px; }
-.tsp-brand-mark { background: var(--primary); color: white; width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; }
-.tsp-brand h1 { margin: 0; font-size: 22px; font-weight: 700; }
-.tsp-brand p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
-.tsp-header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 10; }
-
-.tsp-owner-select { position: relative; display: flex; align-items: center; gap: 8px; background: var(--panel); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border); }
-.tsp-owner-form { position: absolute; top: 100%; right: 0; margin-top: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; gap: 8px; box-shadow: var(--shadow); z-index: 10; }
-
-.tsp-tabs { 
-  display: flex; 
-  flex-wrap: wrap; 
-  justify-content: center;
-  gap: 6px; 
-  max-width: 1200px; 
-  margin: 0 auto; 
-  padding: 0 16px 16px 16px; 
-  position: relative; 
-  z-index: 20; 
-}
-.tsp-tab {
-  background: var(--panel); 
-  border: 1px solid var(--border); 
-  border-radius: 8px;
-  padding: 8px 12px; 
-  font-size: 14px; 
-  color: var(--muted); 
-  font-weight: 600;
-  cursor: pointer; 
-  transition: all 0.2s; 
-  white-space: nowrap;
-  flex: 1 1 calc(33.333% - 12px); 
-  text-align: center;
-}
-.tsp-tab:hover { color: var(--text); border-color: var(--muted); }
-.tsp-tab.active { background: var(--primary); color: white; border-color: var(--primary); }
-
-.tsp-main { max-width: 1200px; margin: 0 auto; padding: 0 24px 64px; }
-
-@keyframes tspFadeIn {
-  0% { opacity: 0; transform: translateX(10px); }
-  100% { opacity: 1; transform: translateX(0); }
-}
-
-.tsp-btn {
-  display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 14px; font-weight: 600;
-  border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text);
-  cursor: pointer; transition: all 0.2s; min-height: 38px;
-}
-.tsp-btn:hover { background: var(--panel-2); }
-.tsp-btn-primary { background: var(--primary); color: white; border-color: var(--primary); }
-.tsp-btn-primary:hover { background: var(--primary-hover); }
-.tsp-icon-btn {
-  background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 6px; border-radius: 6px;
-  display: flex; align-items: center; justify-content: center; transition: 0.2s; min-height: 38px; min-width: 38px;
-}
-.tsp-icon-btn:hover { background: var(--panel-2); color: var(--text); }
-
-.tsp-input {
-  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
-  background: var(--panel); color: var(--text); font-size: 14px; transition: border-color 0.2s; min-height: 38px;
-}
-.tsp-input:focus { outline: none; border-color: var(--primary); }
-.tsp-input-sm { padding: 6px 10px; font-size: 13px; }
-.tsp-select { appearance: none; padding-right: 30px; cursor: pointer; background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e"); background-repeat: no-repeat; background-position: right 8px center; background-size: 16px; }
-
-.tsp-card { background: var(--panel); border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; }
-.tsp-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-.tsp-stat { padding: 20px; display: flex; flex-direction: column; gap: 4px; }
-.tsp-stat-label { font-size: 13px; color: var(--muted); font-weight: 600; }
-.tsp-stat-value { font-size: 24px; font-weight: 700; }
-.tsp-stat-sub { font-size: 13px; }
-
-.tsp-dashboard-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-@media(max-width: 768px) { .tsp-dashboard-bottom { grid-template-columns: 1fr; } }
-.tsp-panel { padding: 20px; }
-.tsp-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.tsp-panel-head h3 { margin: 0; font-size: 16px; }
-
-.tsp-toggle-group { display: flex; background: var(--panel-2); border-radius: 8px; padding: 4px; }
-.tsp-toggle-group button {
-  background: transparent; border: none; padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--muted);
-  border-radius: 6px; cursor: pointer; transition: 0.2s; min-height: 30px;
-}
-.tsp-toggle-group button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.1); }
-
-.tsp-table-wrap { overflow-x: auto; width: 100%; box-sizing: border-box; padding-bottom: 8px; -webkit-overflow-scrolling: touch; }
-.tsp-table { width: 100%; min-width: 1050px; border-collapse: collapse; text-align: left; font-size: 14px; }
-.tsp-table th { background: var(--panel-2); padding: 12px 14px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; }
-.tsp-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; }
-.tsp-table tr:last-child td { border-bottom: none; }
-.tsp-table tbody tr { transition: background 0.2s; }
-.tsp-clickable-row { cursor: pointer; }
-.tsp-clickable-row:hover, .tsp-row-hover:hover { background: var(--panel-2); }
-.tsp-right { text-align: right; }
-.tsp-row-warn { background: rgba(239, 68, 68, 0.05) !important; }
-
-.th-category { min-width: 150px; }
-.th-alerts { min-width: 200px; }
-
-@media (max-width: 768px) {
-  .tsp-header { flex-direction: column; align-items: stretch; gap: 16px; margin-bottom: 12px; }
-  .tsp-header-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
-  .tsp-header-actions > .tsp-owner-select { grid-column: 1 / -1; }
-  .tsp-btn { justify-content: center; padding: 10px; }
-  
-  .tsp-filters { flex-direction: column; align-items: stretch !important; gap: 12px; }
-  .tsp-filters > div, .tsp-filters select { width: 100%; max-width: 100%; }
-}
-
-.tsp-symbol { font-weight: 700; font-size: 15px; }
-.tsp-name { font-size: 12px; white-space: normal; min-width: 80px; }
-.tsp-price-input { display: flex; align-items: center; gap: 4px; justify-content: flex-end; }
-.tsp-price-input input { width: 80px; text-align: right; }
-.tsp-meta-inputs { display: flex; flex-direction: column; gap: 6px; }
-.tsp-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-
-.tsp-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(2px); padding: 16px; }
-.tsp-modal { background: var(--panel); border-radius: var(--radius); width: 100%; max-width: 500px; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1); max-height: 90vh; overflow-y: auto; }
-.tsp-modal-head { display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--border); }
-.tsp-modal-head h3 { margin: 0; font-size: 18px; }
-.tsp-form { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-.tsp-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
-.tsp-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.tsp-textarea { resize: vertical; min-height: 120px; font-family: var(--font-mono); }
-.tsp-form-submit { margin-top: 8px; justify-content: center; padding: 12px; }
-.tsp-hint { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.5; }
-
-.tsp-type-toggle { display: flex; gap: 8px; margin-bottom: 8px; }
-.tsp-type-toggle button { flex: 1; padding: 12px; border: 2px solid var(--border); background: transparent; border-radius: 8px; font-weight: bold; cursor: pointer; color: var(--muted); transition: 0.2s; }
-.tsp-type-toggle button.active { border-color: currentColor; }
-
-.tsp-empty { padding: 48px 24px; text-align: center; color: var(--muted); font-size: 15px; }
-.tsp-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--muted); height: 100vh; font-size: 16px; font-weight: bold; }
-.tsp-spin { animation: tsp-spin 1s linear infinite; }
-@keyframes tsp-spin { 100% { transform: rotate(360deg); } }
-.tsp-toast { position: fixed; bottom: 24px; right: 24px; background: var(--primary); color: white; padding: 12px 24px; border-radius: 8px; box-shadow: var(--shadow); z-index: 1000; animation: tsp-slide-up 0.3s ease-out; font-weight: bold; letter-spacing: 0.5px; }
-@keyframes tsp-slide-up { 0% { transform: translateY(100%); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
-
-.tsp-pie-wrap { display: flex; flex-direction: column; align-items: center; }
-.tsp-legend { width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 16px; }
-.tsp-legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.tsp-dot { width: 10px; height: 10px; border-radius: 50%; }
-
-.tsp-alerts-list { display: flex; flex-direction: column; gap: 12px; }
-.tsp-alert-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; }
-
-.tsp-filters { padding: 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); background: var(--panel-2); flex-wrap: wrap; }
-.tsp-filters select { width: 160px; }
-`;
+                <button type="button" className={form.type === 'buy' ? 'active tsp-up-bg' : ''} onClick={() => setForm(f
