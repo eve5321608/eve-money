@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer,
   LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar, Legend, ReferenceLine,
@@ -135,6 +136,37 @@ function getColorHash(str) {
   return colors[Math.abs(hash) % colors.length];
 }
 
+function BackToTopButton() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setVisible(window.scrollY > 400);
+    window.addEventListener('scroll', onScroll);
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  if (!visible) return null;
+  return (
+    <button className="tsp-back-to-top" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} title="回到頂部">
+      <ChevronUp size={22} />
+    </button>
+  );
+}
+
+function Pagination({ page, totalPages, onChange }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: 16 }}>
+      <button className="tsp-btn" disabled={page <= 1} onClick={() => onChange(page - 1)}>← 上一頁</button>
+      <span className="tsp-muted" style={{ fontSize: 13 }}>第 {page} / {totalPages} 頁</span>
+      <button className="tsp-btn" disabled={page >= totalPages} onClick={() => onChange(page + 1)}>下一頁 →</button>
+    </div>
+  );
+}
+
+function ModalPortal({ children }) {
+  return createPortal(children, document.body);
+}
+
 function Tag({ text }) {
   if (!text) return null;
   const safeText = safeString(text);
@@ -256,6 +288,7 @@ function buildHoldings(state, prices, meta, dividendBySymbol, exchangeRate = 1) 
       const isTargetHit = targetPrice != null && current >= Number(targetPrice);
       const isTargetNear = !isTargetHit && targetPrice != null && current >= Number(targetPrice) * (1 - NEAR_PCT);
       const dividendTotal = (dividendBySymbol && dividendBySymbol[symbol]) || 0;
+      const dividendYieldPct = costTWD > 0 ? (dividendTotal / costTWD) * 100 : 0;
       
       return {
         symbol, name: safeString(h.name), shares: h.shares, avgCost: h.avgCost, current, marketValue, cost, upl, uplPct,
@@ -263,7 +296,7 @@ function buildHoldings(state, prices, meta, dividendBySymbol, exchangeRate = 1) 
         sector: safeString(m.sector) || '', strategy: safeString(m.strategy) || '', chainStage: safeString(m.chainStage) || '', stopLoss, targetPrice, note: m.note || '',
         currentPE: m.currentPE ?? null, peLow: m.peLow ?? null, peHigh: m.peHigh ?? null, epsGrowth: m.epsGrowth ?? null,
         isStopHit, isStopNear, isTargetHit, isTargetNear, isWarning: isStopHit,
-        dividendTotal
+        dividendTotal, dividendYieldPct
       };
     })
     .sort((a, b) => b.marketValue - a.marketValue);
@@ -295,9 +328,12 @@ function groupHoldings(holdings, meta, mode) {
   return Object.entries(map).map(([name, value]) => ({ name, value }));
 }
 
-function dividendsBySymbol(dividends) {
+function dividendsBySymbol(dividends, exchangeRate = 1) {
   const map = {};
-  for (const d of dividends) map[d.symbol] = (map[d.symbol] || 0) + Number(d.totalCash || 0);
+  for (const d of dividends) {
+    const amt = isUSDSymbol(d.symbol) ? Number(d.totalCash || 0) * (Number(exchangeRate) || 1) : Number(d.totalCash || 0);
+    map[d.symbol] = (map[d.symbol] || 0) + amt;
+  }
   return map;
 }
 
@@ -483,7 +519,7 @@ export default function App() {
   }, [dividends, selectedOwner, owners]);
 
   const { state: holdingsState, realizedEvents } = useMemo(() => computePortfolio(filteredTxns, filteredDividends), [filteredTxns, filteredDividends]);
-  const divBySymbol = useMemo(() => dividendsBySymbol(filteredDividends), [filteredDividends]);
+  const divBySymbol = useMemo(() => dividendsBySymbol(filteredDividends, exchangeRate), [filteredDividends, exchangeRate]);
   const holdingsAll = useMemo(() => buildHoldings(holdingsState, prices, meta, divBySymbol, exchangeRate), [holdingsState, prices, meta, divBySymbol, exchangeRate]);
   const toTWD = (amount, symbol) => isUSDSymbol(symbol) ? (Number(amount) || 0) * (Number(exchangeRate) || 1) : (Number(amount) || 0);
 
@@ -509,6 +545,37 @@ export default function App() {
     const totalDividend = filteredDividends.reduce((s, d) => s + toTWD(Number(d.totalCash || 0), d.symbol), 0);
     return { totalMarketValue, totalCost, totalUPL, totalUPLPct: totalCost > 0 ? (totalUPL / totalCost) * 100 : 0, totalRealized, totalDividend, totalCashBalance };
   }, [holdingsAll, realizedEvents, filteredDividends, totalCashBalance, exchangeRate]);
+
+  // 投資績效：簡化版年化報酬率（假設資金一次性投入，未精確處理每筆資金進出的時間點，僅供參考）
+  const performance = useMemo(() => {
+    const allDates = [...filteredTxns.map(t => t.date), ...filteredCashTxns.map(c => c.date)];
+    const startDate = allDates.length ? allDates.reduce((min, d) => d < min ? d : min, allDates[0]) : null;
+    const netInvested = filteredCashTxns.reduce((s, c) => s + (c.type === 'deposit' ? Number(c.amount) : -Number(c.amount)), 0);
+    const currentTotalValue = totals.totalMarketValue + totals.totalCashBalance;
+    const totalReturnPct = netInvested > 0 ? ((currentTotalValue - netInvested) / netInvested) * 100 : null;
+    let yearsElapsed = null, annualizedReturnPct = null;
+    if (startDate) yearsElapsed = (Date.now() - new Date(startDate).getTime()) / (365.25 * 24 * 3600 * 1000);
+    if (netInvested > 0 && currentTotalValue > 0 && yearsElapsed && yearsElapsed >= (1 / 365.25)) {
+      annualizedReturnPct = (Math.pow(currentTotalValue / netInvested, 1 / yearsElapsed) - 1) * 100;
+    }
+    return { startDate, netInvested, currentTotalValue, totalReturnPct, yearsElapsed, annualizedReturnPct };
+  }, [filteredTxns, filteredCashTxns, totals.totalMarketValue, totals.totalCashBalance]);
+
+  // 大盤/ETF對照（選填）：預設帶入 0050 的歷史價格區間，可自行修改成任何你想比較的指數或ETF價位
+  const [benchmarkStart, setBenchmarkStart] = useState('');
+  const [benchmarkEnd, setBenchmarkEnd] = useState('');
+  useEffect(() => {
+    if (prices['0050'] && prices['0050'].history && prices['0050'].history.length > 0) {
+      const sortedHist = [...prices['0050'].history].sort((a, b) => new Date(a.date) - new Date(b.date));
+      setBenchmarkStart(prev => prev || String(sortedHist[0].price));
+    }
+    if (prices['0050'] && prices['0050'].current) {
+      setBenchmarkEnd(prev => prev || String(prices['0050'].current));
+    }
+  }, [prices]);
+  const benchmarkReturnPct = (benchmarkStart && benchmarkEnd && Number(benchmarkStart) > 0)
+    ? ((Number(benchmarkEnd) - Number(benchmarkStart)) / Number(benchmarkStart)) * 100
+    : null;
 
   const holdings = useMemo(() => {
     return holdingsAll.filter(h => {
@@ -548,6 +615,14 @@ export default function App() {
       if (h.isTargetHit) list.push({ tone: 'up', icon: CheckCircle2, text: `${h.symbol} ${safeHName} 已達目標價 ${fmtPrice(h.targetPrice)}` });
       else if (h.isTargetNear) list.push({ tone: 'up', icon: Bell, text: `${h.symbol} ${safeHName} 接近目標價 ${fmtPrice(h.targetPrice)}` });
     }
+
+    const sectorTotals = {};
+    holdingsAll.forEach(h => { const key = h.sector || '未分類'; sectorTotals[key] = (sectorTotals[key] || 0) + h.marketValueTWD; });
+    Object.entries(sectorTotals).forEach(([sector, val]) => {
+      if (sector !== '未分類' && totals.totalMarketValue > 0 && (val / totals.totalMarketValue) > 0.5) {
+        list.push({ tone: 'warn', icon: AlertTriangle, text: `產業集中警告：「${sector}」合計佔總市值達 ${fmt2((val/totals.totalMarketValue)*100)}%，較為集中，請留意單一產業風險` });
+      }
+    });
 
     for (const w of watchlists) {
       const current = prices[w.symbol]?.current;
@@ -1164,7 +1239,7 @@ export default function App() {
       </nav>
 
       <main className="tsp-main" key={tab} style={{ animation: 'tspFadeIn 0.25s ease-out forwards' }}>
-        {tab === 'dashboard' && <Dashboard totals={totals} holdings={holdingsAll} meta={meta} groupMode={groupMode} setGroupMode={setGroupMode} alerts={alerts} />}
+        {tab === 'dashboard' && <Dashboard totals={totals} holdings={holdingsAll} meta={meta} groupMode={groupMode} setGroupMode={setGroupMode} alerts={alerts} performance={performance} benchmarkStart={benchmarkStart} setBenchmarkStart={setBenchmarkStart} benchmarkEnd={benchmarkEnd} setBenchmarkEnd={setBenchmarkEnd} benchmarkReturnPct={benchmarkReturnPct} />}
         {tab === 'holdings' && <Holdings holdings={holdings} priceDraft={priceDraft} setPriceDraft={setPriceDraft} updatePrice={updatePrice} updateMeta={updateMeta} strategyFilter={strategyFilter} setStrategyFilter={setStrategyFilter} sectorFilter={sectorFilter} setSectorFilter={setSectorFilter} sectorOptions={sectorOptions} strategyOptions={strategyOptions} chainStageFilter={chainStageFilter} setChainStageFilter={setChainStageFilter} chainStageOptions={chainStageOptions} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onAtrCalculate={handleAtrCalculation} safeNameStr={safeNameStr} />}
         {tab === 'txns' && <Transactions transactions={selectedOwner === 'all' ? transactions : filteredTxns} onEdit={handleEditTxn} onCopy={handleCopyTxn} onDelete={deleteTxn} showOwner={owners.length > 1} safeNameStr={safeNameStr} />}
         {tab === 'dividends' && <Dividends dividends={selectedOwner === 'all' ? dividends : filteredDividends} onEdit={handleEditDividend} onDelete={deleteDividend} showOwner={owners.length > 1} yearlyDividends={yearlyDividends} onAdd={() => { resetDivForm(); setShowDividendForm(true); }} totalDividend={totals.totalDividend} safeNameStr={safeNameStr} />}
@@ -1176,8 +1251,10 @@ export default function App() {
       </main>
 
       {toastMsg && <div className="tsp-toast">{toastMsg}</div>}
+      <BackToTopButton />
 
       {cloudModal && (
+      <ModalPortal>
         <div className="tsp-modal-backdrop" onClick={() => setCloudModal(false)}>
           <div className="tsp-modal" onClick={e => e.stopPropagation()}>
             <div className="tsp-modal-head">
@@ -1239,10 +1316,12 @@ export default function App() {
             </div>
           </div>
         </div>
+      </ModalPortal>
       )}
 
       {/* 交易表單 */}
       {showForm && (
+      <ModalPortal>
         <div className="tsp-modal-backdrop" onClick={() => { setShowForm(false); resetForm(); }}>
           <div className="tsp-modal" onClick={e => e.stopPropagation()}>
             <div className="tsp-modal-head">
@@ -1296,10 +1375,12 @@ export default function App() {
             </form>
           </div>
         </div>
+      </ModalPortal>
       )}
 
       {/* 股利表單 */}
       {showDividendForm && (
+      <ModalPortal>
         <div className="tsp-modal-backdrop" onClick={() => { setShowDividendForm(false); resetDivForm(); }}>
           <div className="tsp-modal" onClick={e => e.stopPropagation()}>
             <div className="tsp-modal-head">
@@ -1334,10 +1415,12 @@ export default function App() {
             </form>
           </div>
         </div>
+      </ModalPortal>
       )}
 
       {/* 現金明細表單 */}
       {showCashForm && (
+      <ModalPortal>
         <div className="tsp-modal-backdrop" onClick={() => { setShowCashForm(false); resetCashForm(); }}>
           <div className="tsp-modal" onClick={e => e.stopPropagation()}>
             <div className="tsp-modal-head">
@@ -1363,10 +1446,12 @@ export default function App() {
             </form>
           </div>
         </div>
+      </ModalPortal>
       )}
 
       {/* 觀察名單表單 */}
       {showWatchlistForm && (
+      <ModalPortal>
         <div className="tsp-modal-backdrop" onClick={() => { setShowWatchlistForm(false); resetWatchForm(); }}>
           <div className="tsp-modal" onClick={e => e.stopPropagation()}>
             <div className="tsp-modal-head">
@@ -1402,6 +1487,7 @@ export default function App() {
             </form>
           </div>
         </div>
+      </ModalPortal>
       )}
     </div>
   );
@@ -1458,7 +1544,9 @@ function AllocationPie({ holdings, meta, groupMode, totalMarketValue }) {
   );
 }
 
-function Dashboard({ totals, holdings, meta, groupMode, setGroupMode, alerts }) {
+function Dashboard({ totals, holdings, meta, groupMode, setGroupMode, alerts, performance, benchmarkStart, setBenchmarkStart, benchmarkEnd, setBenchmarkEnd, benchmarkReturnPct }) {
+  const dividendYieldPct = totals.totalCost > 0 ? (totals.totalDividend / totals.totalCost) * 100 : 0;
+  const diffVsBenchmark = (performance.annualizedReturnPct != null && benchmarkReturnPct != null) ? performance.annualizedReturnPct - benchmarkReturnPct : null;
   return (
     <div className="tsp-dashboard">
       <div className="tsp-stats-grid">
@@ -1467,7 +1555,7 @@ function Dashboard({ totals, holdings, meta, groupMode, setGroupMode, alerts }) 
         <StatCard label="戶頭可用餘額" value={money(totals.totalCashBalance)} tone={totals.totalCashBalance < 0 ? 'tsp-down' : ''} />
         <StatCard label="未實現損益" value={(totals.totalUPL > 0 ? '+' : '') + money(totals.totalUPL)} sub={pct(totals.totalUPLPct)} tone={changeCls(totals.totalUPL)} />
         <StatCard label="已實現損益" value={(totals.totalRealized > 0 ? '+' : '') + money(totals.totalRealized)} tone={changeCls(totals.totalRealized)} />
-        <StatCard label="累計股利" value={money(totals.totalDividend)} tone="tsp-up" />
+        <StatCard label="累計股利" value={money(totals.totalDividend)} sub={totals.totalCost > 0 ? `殖利率 ${pct(dividendYieldPct)}` : null} tone="tsp-up" />
       </div>
       <div className="tsp-dashboard-bottom">
         <div className="tsp-card tsp-panel">
@@ -1481,11 +1569,45 @@ function Dashboard({ totals, holdings, meta, groupMode, setGroupMode, alerts }) 
           </div>
         </div>
       </div>
+
+      <div className="tsp-card tsp-panel" style={{ marginTop: 16 }}>
+        <div className="tsp-panel-head"><h3>投資績效與大盤對照</h3></div>
+        <p className="tsp-hint" style={{ margin: '0 0 12px' }}>
+          年化報酬率是簡化估算：假設所有資金在期初一次投入（起始日：{performance.startDate || '尚無資料'}），沒有精確處理每一筆資金進出的時間點，僅供大致參考，不是精確的 XIRR 計算。
+        </p>
+        <div className="tsp-stats-grid">
+          <StatCard label="累計淨投入本金" value={money(performance.netInvested)} />
+          <StatCard label="總報酬率" value={performance.totalReturnPct != null ? pct(performance.totalReturnPct) : '尚無資料'} tone={performance.totalReturnPct != null ? changeCls(performance.totalReturnPct) : ''} />
+          <StatCard label="簡化年化報酬率" value={performance.annualizedReturnPct != null ? pct(performance.annualizedReturnPct) : '未滿一年或資料不足'} tone={performance.annualizedReturnPct != null ? changeCls(performance.annualizedReturnPct) : ''} />
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px dashed var(--border)' }}>
+          <p className="tsp-hint" style={{ margin: '0 0 8px' }}>大盤/ETF 對照（選填，預設帶入 0050 價格，也可自行換成你想比較的指數或ETF；填的是「大盤本身」的價格，不是你的買進成本）</p>
+          <div className="tsp-form-row" style={{ marginBottom: 12 }}>
+            <label>期初參考價<br /><span className="tsp-hint" style={{ fontWeight: 'normal' }}>你投資起始日當天的收盤價</span><input type="number" step="any" className="tsp-input tsp-mono" value={benchmarkStart} onChange={e => setBenchmarkStart(e.target.value)} onWheel={e => e.target.blur()} /></label>
+            <label>目前參考價<br /><span className="tsp-hint" style={{ fontWeight: 'normal' }}>今天的最新收盤價</span><input type="number" step="any" className="tsp-input tsp-mono" value={benchmarkEnd} onChange={e => setBenchmarkEnd(e.target.value)} onWheel={e => e.target.blur()} /></label>
+          </div>
+          {benchmarkReturnPct != null ? (
+            <div className="tsp-stats-grid">
+              <StatCard label="同期大盤/ETF報酬率" value={pct(benchmarkReturnPct)} tone={changeCls(benchmarkReturnPct)} />
+              <StatCard label="你 vs 大盤" value={diffVsBenchmark != null ? `${diffVsBenchmark > 0 ? '+' : ''}${pct(diffVsBenchmark)}` : '尚無資料'} sub={diffVsBenchmark != null ? (diffVsBenchmark > 0 ? '跑贏大盤' : diffVsBenchmark < 0 ? '跑輸大盤' : '打平大盤') : null} tone={diffVsBenchmark != null ? changeCls(diffVsBenchmark) : ''} />
+            </div>
+          ) : <Empty text="填入期初/目前參考價後，會顯示同期報酬率比較" />}
+        </div>
+      </div>
     </div>
   );
 }
 
 function Holdings({ holdings, priceDraft, setPriceDraft, updatePrice, updateMeta, strategyFilter, setStrategyFilter, sectorFilter, setSectorFilter, sectorOptions, strategyOptions, chainStageFilter, setChainStageFilter, chainStageOptions, searchQuery, setSearchQuery, onAtrCalculate, safeNameStr }) {
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+  const [detailSymbol, setDetailSymbol] = useState(null);
+  useEffect(() => { setPage(1); }, [searchQuery, sectorFilter, chainStageFilter, strategyFilter]);
+  const totalPages = Math.max(1, Math.ceil(holdings.length / PAGE_SIZE));
+  const visibleHoldings = holdings.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const h = detailSymbol ? holdings.find(x => x.symbol === detailSymbol) : null;
+  const detailSignal = h ? computeDavisSignal(h) : null;
   return (
     <div>
       <DavisQuadrantChart items={holdings} title="持股 戴維斯雙擊象限總覽" />
@@ -1500,6 +1622,7 @@ function Holdings({ holdings, priceDraft, setPriceDraft, updatePrice, updateMeta
         <select className="tsp-input tsp-select" style={{ flex: 1, minWidth: '120px' }} value={strategyFilter} onChange={e => setStrategyFilter(e.target.value)}><option value="all">所有策略</option>{strategyOptions.map(o => <option key={o} value={o}>{o}</option>)}</select>
       </div>
       <p className="tsp-hint" style={{ padding: '0 16px', margin: '8px 0 0' }}>💱 美股（USD）以美元原幣顯示均價/市值；總覽與圖表的加總數字，會依右上角設定的匯率換算為台幣。</p>
+      <p className="tsp-hint" style={{ padding: '0 16px', margin: '4px 0 0' }}>📱 手機上不方便左右滑動看完整欄位的話，可以點股票代號旁的<span style={{ whiteSpace: 'nowrap' }}>&nbsp;<Eye size={12} style={{ verticalAlign: 'middle' }} />&nbsp;圖示</span>，用彈出卡片查看/編輯完整資訊。</p>
       <DavisLegend />
       <div className="tsp-table-wrap">
         <table className="tsp-table">
@@ -1509,10 +1632,14 @@ function Holdings({ holdings, priceDraft, setPriceDraft, updatePrice, updateMeta
             </tr>
           </thead>
           <tbody>
-            {holdings.map(h => (
+            {visibleHoldings.map(h => (
               <tr key={h.symbol} className={h.isWarning ? 'tsp-row-warn' : ''}>
                 <td style={{ whiteSpace: 'normal', wordBreak: 'break-word', minWidth: '100px' }}>
-                  <div className="tsp-symbol">{h.symbol} {h.currency === 'USD' && <span className="tsp-badge tsp-warn-bg tsp-warn" style={{ fontSize: 10, marginLeft: 4 }}>USD</span>}</div><div className="tsp-name tsp-muted">{safeNameStr(h.name)}</div>
+                  <div className="tsp-symbol" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {h.symbol} {h.currency === 'USD' && <span className="tsp-badge tsp-warn-bg tsp-warn" style={{ fontSize: 10 }}>USD</span>}
+                    <button className="tsp-icon-btn" title="查看/編輯完整卡片" onClick={() => setDetailSymbol(h.symbol)}><Eye size={14} /></button>
+                  </div>
+                  <div className="tsp-name tsp-muted">{safeNameStr(h.name)}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px', alignItems: 'flex-start' }}><Tag text={h.sector} /><Tag text={h.chainStage} /><Tag text={h.strategy} /></div>
                 </td>
                 <td className="tsp-right tsp-mono">{fmtInt(h.shares)}</td>
@@ -1561,25 +1688,88 @@ function Holdings({ holdings, priceDraft, setPriceDraft, updatePrice, updateMeta
           </tbody>
         </table>
       </div>
+      <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </div>
+
+      {h && (
+      <ModalPortal>
+        <div className="tsp-modal-backdrop" onClick={() => setDetailSymbol(null)}>
+          <div className="tsp-modal" onClick={e => e.stopPropagation()}>
+            <div className="tsp-modal-head">
+              <h3>{h.symbol} {safeNameStr(h.name)} {h.currency === 'USD' && <span className="tsp-badge tsp-warn-bg tsp-warn" style={{ fontSize: 10 }}>USD</span>}</h3>
+              <button type="button" className="tsp-icon-btn" onClick={() => setDetailSymbol(null)}><X size={18} /></button>
+            </div>
+            <div style={{ padding: 20, maxHeight: '75vh', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}><Tag text={h.sector} /><Tag text={h.chainStage} /><Tag text={h.strategy} /></div>
+
+              <div className="tsp-data-card" style={{ marginBottom: 16 }}>
+                <div className="tsp-data-card-row"><span>股數</span><span>{fmtInt(h.shares)}</span></div>
+                <div className="tsp-data-card-row"><span>均價(含稅費)</span><span>{fmtPrice(h.avgCost)}</span></div>
+                <div className="tsp-data-card-row"><span>現價</span><span>{fmtPrice(h.current)}</span></div>
+                <div className="tsp-data-card-row"><span>市值</span><span>{fmtInt(h.marketValue)}</span></div>
+                <div className="tsp-data-card-row"><span>未實現損益</span><span className={changeCls(h.upl)}>{h.upl > 0 ? '+' : ''}{fmtInt(h.upl)}（{pct(h.uplPct)}）</span></div>
+                {h.dividendTotal > 0 && <div className="tsp-data-card-row"><span>累計股利</span><span className="tsp-up">{fmtInt(h.dividendTotal)}（殖利率 {pct(h.dividendYieldPct)}）</span></div>}
+              </div>
+
+              <p className="tsp-hint" style={{ margin: '0 0 6px' }}>更新現價</p>
+              <div className="tsp-price-input" style={{ marginBottom: 16 }}>
+                <input className="tsp-input tsp-mono" style={{ flex: 1 }} placeholder={fmtPrice(h.current)} value={priceDraft[h.symbol] ?? ''} onChange={e => setPriceDraft(d => ({...d, [h.symbol]: e.target.value}))} onWheel={e => e.target.blur()} onKeyDown={e => e.key === 'Enter' && updatePrice(h.symbol)} />
+                {(priceDraft[h.symbol] && Number(priceDraft[h.symbol]) > 0) && <button className="tsp-icon-btn" onClick={() => updatePrice(h.symbol)}><Save size={16} /></button>}
+              </div>
+
+              <p className="tsp-hint" style={{ margin: '0 0 6px' }}>分類設定</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                <MetaInput options={sectorOptions} placeholder="選擇產業" val={h.sector} onSave={(v) => updateMeta(h.symbol, { sector: v })} />
+                <MetaInput options={chainStageOptionsForSector(h.sector)} placeholder="選擇產業鏈階段" val={h.chainStage} onSave={(v) => updateMeta(h.symbol, { chainStage: v })} />
+                <MetaInput options={strategyOptions} placeholder="選擇策略" val={h.strategy} onSave={(v) => updateMeta(h.symbol, { strategy: v })} />
+              </div>
+
+              <p className="tsp-hint" style={{ margin: '0 0 6px' }}>戴維斯雙擊觀察</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="tsp-muted" style={{ fontSize: 13, minWidth: 50 }}>本益比</span><BlurInput val={h.currentPE} placeholder="本益比" onSave={(v) => updateMeta(h.symbol, { currentPE: v })} /></div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="tsp-muted" style={{ fontSize: 13, minWidth: 50 }}>河流區間</span><BlurInput val={h.peLow} placeholder="下緣" onSave={(v) => updateMeta(h.symbol, { peLow: v })} /><BlurInput val={h.peHigh} placeholder="上緣" onSave={(v) => updateMeta(h.symbol, { peHigh: v })} /></div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="tsp-muted" style={{ fontSize: 13, minWidth: 50 }}>EPS成長%</span><BlurInput val={h.epsGrowth} placeholder="成長率%" onSave={(v) => updateMeta(h.symbol, { epsGrowth: v })} /></div>
+                {detailSignal && detailSignal.pos != null && <PEGauge low={h.peLow} high={h.peHigh} current={h.currentPE} />}
+                {detailSignal && detailSignal.label && <span className={`tsp-badge ${detailSignal.tone}`} style={{ fontSize: 11 }}>{detailSignal.label}</span>}
+              </div>
+
+              <p className="tsp-hint" style={{ margin: '0 0 6px' }}>停損/獲利提醒</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="tsp-muted" style={{ fontSize: 13, fontWeight: 'bold', minWidth: 40 }}>防守</span><BlurInput val={h.stopLoss} placeholder="輸入防守價" onSave={(v) => updateMeta(h.symbol, { stopLoss: v })} /></div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span className="tsp-muted" style={{ fontSize: 13, fontWeight: 'bold', minWidth: 40 }}>目標</span><BlurInput val={h.targetPrice} placeholder="輸入目標價" onSave={(v) => updateMeta(h.symbol, { targetPrice: v })} /></div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="tsp-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => updateMeta(h.symbol, { stopLoss: cleanNum(h.avgCost * 0.9), targetPrice: cleanNum(h.avgCost * 1.2) })} title="防守設為成本-10% / 目標設為成本+20%">±10/20%</button>
+                  <button type="button" className="tsp-btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => onAtrCalculate(h.symbol, h.current)} title="根據最近 14 天資料計算 ATR">ATR</button>
+                </div>
+              </div>
+
+              <p className="tsp-hint" style={{ margin: '0 0 6px' }}>持股筆記</p>
+              <input className="tsp-input" placeholder="持股筆記..." value={h.note || ''} onChange={e => updateMeta(h.symbol, { note: e.target.value })} />
+            </div>
+          </div>
+        </div>
+      </ModalPortal>
+      )}
     </div>
   );
 }
 
 function Transactions({ transactions, onEdit, onDelete, onCopy, showOwner, safeNameStr }) {
-  const [visibleCount, setVisibleCount] = useState(20);
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   if (!transactions.length) return <Empty text="尚無交易紀錄，點擊右上角「新增交易」開始記錄" />;
   const sorted = [...transactions].sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id);
   const filtered = searchQuery
     ? sorted.filter(t => t.symbol.toLowerCase().includes(searchQuery.toLowerCase()) || safeNameStr(t.name).toLowerCase().includes(searchQuery.toLowerCase()) || (t.note || '').toLowerCase().includes(searchQuery.toLowerCase()))
     : sorted;
-  const visible = filtered.slice(0, visibleCount);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   return (
     <div className="tsp-card tsp-table-wrap">
       <div style={{ position: 'relative', margin: '0 0 12px', maxWidth: 280 }}>
         <Search size={14} className="tsp-muted" style={{ position: 'absolute', left: 10, top: 12 }} />
-        <input className="tsp-input" placeholder="搜尋代號、名稱或筆記..." style={{ paddingLeft: 32 }} value={searchQuery} onChange={e => { setSearchQuery(e.target.value); setVisibleCount(20); }} />
+        <input className="tsp-input" placeholder="搜尋代號、名稱或筆記..." style={{ paddingLeft: 32 }} value={searchQuery} onChange={e => { setSearchQuery(e.target.value); setPage(1); }} />
       </div>
       <table className="tsp-table">
         <thead>
@@ -1608,11 +1798,7 @@ function Transactions({ transactions, onEdit, onDelete, onCopy, showOwner, safeN
           })}
         </tbody>
       </table>
-      {filtered.length > visibleCount && (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}>
-          <button className="tsp-btn" onClick={() => setVisibleCount(v => v + 20)}>顯示更多（目前 {visible.length} / {filtered.length} 筆）</button>
-        </div>
-      )}
+      <Pagination page={page} totalPages={totalPages} onChange={setPage} />
     </div>
   );
 }
@@ -1646,13 +1832,15 @@ function CashAccount({ cashTransactions, onEdit, onDelete, showOwner, totalCashB
 }
 
 function Dividends({ dividends, onEdit, onDelete, showOwner, yearlyDividends, onAdd, totalDividend, safeNameStr }) {
-  const [visibleCount, setVisibleCount] = useState(20);
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const sorted = [...dividends].sort((a, b) => new Date(b.date) - new Date(a.date) || b.id - a.id);
   const filtered = searchQuery
     ? sorted.filter(d => d.symbol.toLowerCase().includes(searchQuery.toLowerCase()) || safeNameStr(d.name).toLowerCase().includes(searchQuery.toLowerCase()) || (d.note || '').toLowerCase().includes(searchQuery.toLowerCase()))
     : sorted;
-  const visible = filtered.slice(0, visibleCount);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const visible = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   return (
     <div className="tsp-dividends-view">
       <div className="tsp-stats-grid" style={{ marginBottom: 16 }}>
@@ -1663,7 +1851,7 @@ function Dividends({ dividends, onEdit, onDelete, showOwner, yearlyDividends, on
       <div className="tsp-card tsp-table-wrap">
         <div style={{ position: 'relative', margin: '0 0 12px', maxWidth: 280 }}>
           <Search size={14} className="tsp-muted" style={{ position: 'absolute', left: 10, top: 12 }} />
-          <input className="tsp-input" placeholder="搜尋代號、名稱或備註..." style={{ paddingLeft: 32 }} value={searchQuery} onChange={e => { setSearchQuery(e.target.value); setVisibleCount(20); }} />
+          <input className="tsp-input" placeholder="搜尋代號、名稱或備註..." style={{ paddingLeft: 32 }} value={searchQuery} onChange={e => { setSearchQuery(e.target.value); setPage(1); }} />
         </div>
         <table className="tsp-table">
           <thead><tr><th>日期</th><th>股票</th><th className="tsp-right">配息股數</th><th className="tsp-right">現金股利/股</th><th className="tsp-right">股票股利/股</th><th className="tsp-right">總現金股利</th>{showOwner && <th>持有者</th>}<th>備註</th><th>操作</th></tr></thead>
@@ -1678,17 +1866,14 @@ function Dividends({ dividends, onEdit, onDelete, showOwner, yearlyDividends, on
             ))}
           </tbody>
         </table>
-        {filtered.length > visibleCount && (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}>
-            <button className="tsp-btn" onClick={() => setVisibleCount(v => v + 20)}>顯示更多（目前 {visible.length} / {filtered.length} 筆）</button>
-          </div>
-        )}
+        <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </div>
     </div>
   );
 }
 
 function Charts({ holdings, prices, meta, symbols, chartSymbol, setChartSymbol, groupMode, setGroupMode, safeNameStr }) {
+  const [section, setSection] = useState('ranking');
   const currentSymbol = chartSymbol || (symbols.length > 0 ? symbols[0] : null);
   const historyData = useMemo(() => {
     if (!currentSymbol || !prices[currentSymbol] || !prices[currentSymbol].history) return [];
@@ -1699,71 +1884,95 @@ function Charts({ holdings, prices, meta, symbols, chartSymbol, setChartSymbol, 
   const pnlData = useMemo(() => holdings.map(h => ({ name: `${h.symbol} ${safeNameStr(h.name)}`, fullName: safeNameStr(h.name), pnl: h.uplTWD ?? h.upl })).sort((a, b) => b.pnl - a.pnl), [holdings, safeNameStr]);
   const currentHoldingAvgCost = useMemo(() => { const h = holdings.find(x => x.symbol === currentSymbol); return h ? h.avgCost : null; }, [currentSymbol, holdings]);
 
+  const SECTIONS = [
+    ['ranking', '損益排行'],
+    ['allocation', '資產分佈'],
+    ['pnlByGroup', '分類損益'],
+    ['history', '個股走勢'],
+  ];
+
   return (
     <div className="tsp-charts-view">
-      <div className="tsp-card tsp-panel" style={{ marginBottom: 16 }}>
-        <div className="tsp-panel-head"><h3>各股未實現損益排行榜</h3></div>
-        {pnlData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={pnlData} margin={{ top: 10, right: 10, left: 20, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} angle={-30} textAnchor="end" interval={0} height={50} />
-              <YAxis stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
-              <Tooltip formatter={v => money(v)} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-              <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{pnlData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.pnl > 0 ? 'var(--up)' : 'var(--down)'} />))}</Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : <Empty text="尚無持股" />}
+      <div className="tsp-tabs" style={{ padding: '0 0 12px' }}>
+        {SECTIONS.map(([k, l]) => (
+          <button key={k} className={`tsp-tab ${section === k ? 'active' : ''}`} onClick={() => setSection(k)}>{l}</button>
+        ))}
       </div>
-      <div className="tsp-card tsp-panel" style={{ marginBottom: 16 }}>
-        <div className="tsp-panel-head"><h3>資產分佈長條圖</h3><GroupToggle groupMode={groupMode} setGroupMode={setGroupMode} /></div>
-        {barData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={barData} margin={{ top: 10, right: 10, left: 20, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} angle={-30} textAnchor="end" interval={0} height={50} />
-              <YAxis stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
-              <Tooltip formatter={v => money(v)} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-              <Bar dataKey="value" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : <Empty text="尚無持股" />}
-      </div>
-      <div className="tsp-card tsp-panel" style={{ marginBottom: 16 }}>
-        <div className="tsp-panel-head"><h3>依分類損益長條圖</h3><GroupToggle groupMode={groupMode} setGroupMode={setGroupMode} /></div>
-        <p className="tsp-hint" style={{ margin: '0 0 8px' }}>跟上面「資產分佈」用同一組分類切換，看的是每個分類目前的未實現損益（已換算台幣）加總。</p>
-        {pnlByGroupData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={pnlByGroupData} margin={{ top: 10, right: 10, left: 20, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} angle={-30} textAnchor="end" interval={0} height={50} />
-              <YAxis stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
-              <Tooltip formatter={v => money(v)} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-              <Bar dataKey="value" radius={[4, 4, 0, 0]}>{pnlByGroupData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.value > 0 ? 'var(--up)' : 'var(--down)'} />))}</Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        ) : <Empty text="尚無持股" />}
-      </div>
-      <div className="tsp-card tsp-panel">
-        <div className="tsp-panel-head">
-          <h3>個股歷史股價紀錄</h3>
-          <select className="tsp-input tsp-select" style={{ width: 'auto' }} value={currentSymbol || ''} onChange={e => setChartSymbol(e.target.value)}>
-            {symbols.map(s => { const holding = holdings.find(h => h.symbol === s); return <option key={s} value={s}>{s}{holding ? ` ${safeNameStr(holding.name)}` : ''}</option>; })}
-          </select>
+
+      {section === 'ranking' && (
+        <div className="tsp-card tsp-panel">
+          <div className="tsp-panel-head"><h3>各股未實現損益排行榜</h3></div>
+          {pnlData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={Math.max(240, pnlData.length * 34 + 40)}>
+              <BarChart data={pnlData} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                <XAxis type="number" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
+                <YAxis type="category" dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} width={100} />
+                <Tooltip formatter={v => money(v)} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
+                <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>{pnlData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.pnl > 0 ? 'var(--up)' : 'var(--down)'} />))}</Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <Empty text="尚無持股" />}
         </div>
-        {historyData.length > 1 ? (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={historyData} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="date" stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
-              <YAxis domain={['auto', 'auto']} stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
-              <Tooltip contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
-              <Line type="monotone" dataKey="price" stroke="var(--primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--primary)' }} activeDot={{ r: 6 }} name="收盤價" />
-              {currentHoldingAvgCost && <ReferenceLine y={currentHoldingAvgCost} stroke="var(--up)" strokeDasharray="5 5" label={{ position: 'top', value: '平均成本', fill: 'var(--up)', fontSize: 12 }} />}
-            </LineChart>
-          </ResponsiveContainer>
-        ) : <Empty text="此股票無足夠的歷史股價紀錄 (需有兩筆以上)。" />}
-      </div>
+      )}
+
+      {section === 'allocation' && (
+        <div className="tsp-card tsp-panel">
+          <div className="tsp-panel-head"><h3>資產分佈長條圖</h3><GroupToggle groupMode={groupMode} setGroupMode={setGroupMode} /></div>
+          {barData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={Math.max(240, barData.length * 34 + 40)}>
+              <BarChart data={barData} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                <XAxis type="number" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
+                <YAxis type="category" dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} width={100} />
+                <Tooltip formatter={v => money(v)} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
+                <Bar dataKey="value" fill="var(--primary)" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <Empty text="尚無持股" />}
+        </div>
+      )}
+
+      {section === 'pnlByGroup' && (
+        <div className="tsp-card tsp-panel">
+          <div className="tsp-panel-head"><h3>依分類損益長條圖</h3><GroupToggle groupMode={groupMode} setGroupMode={setGroupMode} /></div>
+          <p className="tsp-hint" style={{ margin: '0 0 8px' }}>跟「資產分佈」用同一組分類切換，看的是每個分類目前的未實現損益（已換算台幣）加總。</p>
+          {pnlByGroupData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={Math.max(240, pnlByGroupData.length * 34 + 40)}>
+              <BarChart data={pnlByGroupData} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                <XAxis type="number" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} tickFormatter={v => fmtInt(v / 10000) + '萬'} />
+                <YAxis type="category" dataKey="name" stroke="var(--muted)" tick={{ fill: 'var(--muted)', fontSize: 11 }} width={100} />
+                <Tooltip formatter={v => money(v)} cursor={{ fill: 'var(--panel-2)' }} contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]}>{pnlByGroupData.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.value > 0 ? 'var(--up)' : 'var(--down)'} />))}</Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <Empty text="尚無持股" />}
+        </div>
+      )}
+
+      {section === 'history' && (
+        <div className="tsp-card tsp-panel">
+          <div className="tsp-panel-head">
+            <h3>個股歷史股價紀錄</h3>
+            <select className="tsp-input tsp-select" style={{ width: 'auto' }} value={currentSymbol || ''} onChange={e => setChartSymbol(e.target.value)}>
+              {symbols.map(s => { const holding = holdings.find(h => h.symbol === s); return <option key={s} value={s}>{s}{holding ? ` ${safeNameStr(holding.name)}` : ''}</option>; })}
+            </select>
+          </div>
+          {historyData.length > 1 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={historyData} margin={{ top: 10, right: 10, left: 10, bottom: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="date" stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
+                <YAxis domain={['auto', 'auto']} stroke="var(--muted)" tick={{ fill: 'var(--muted)' }} />
+                <Tooltip contentStyle={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)' }} />
+                <Line type="monotone" dataKey="price" stroke="var(--primary)" strokeWidth={3} dot={{ r: 4, fill: 'var(--primary)' }} activeDot={{ r: 6 }} name="收盤價" />
+                {currentHoldingAvgCost && <ReferenceLine y={currentHoldingAvgCost} stroke="var(--up)" strokeDasharray="5 5" label={{ position: 'top', value: '平均成本', fill: 'var(--up)', fontSize: 12 }} />}
+              </LineChart>
+            </ResponsiveContainer>
+          ) : <Empty text="此股票無足夠的歷史股價紀錄 (需有兩筆以上)。" />}
+        </div>
+      )}
     </div>
   );
 }
@@ -1937,74 +2146,116 @@ function WatchlistPanel({ watchlists, prices, onEdit, onDelete, onAdd, safeNameS
 }
 
 function Monthly({ monthly, safeNameStr }) {
-  const [expandedMonth, setExpandedMonth] = useState(null);
+  const [detailMonth, setDetailMonth] = useState(null);
   if (!monthly.length) return <Empty text="尚無月度統整資料" />;
+  const m = detailMonth ? monthly.find(x => x.month === detailMonth) : null;
+  const netFlow = m ? (m.sellAmt - m.buyAmt + m.dividend) : 0;
   return (
     <div className="tsp-card tsp-table-wrap">
       <table className="tsp-table">
         <thead><tr><th>月份</th><th className="tsp-right">交易次數</th><th className="tsp-right">買入總額</th><th className="tsp-right">賣出總額</th><th className="tsp-right">已實現損益</th><th className="tsp-right">領取股利</th><th className="tsp-right">月度淨現金流</th><th></th></tr></thead>
         <tbody>
-          {monthly.map(m => {
-            const netFlow = m.sellAmt - m.buyAmt + m.dividend;
-            const isExpanded = expandedMonth === m.month;
+          {monthly.map(mo => {
+            const nf = mo.sellAmt - mo.buyAmt + mo.dividend;
             return (
-              <React.Fragment key={m.month}>
-                <tr className="tsp-row-hover" style={{ cursor: 'pointer' }} onClick={() => setExpandedMonth(isExpanded ? null : m.month)}>
-                  <td className="tsp-mono"><b>{m.month}</b></td><td className="tsp-right tsp-mono">{m.count}</td><td className="tsp-right tsp-mono">{fmtInt(m.buyAmt)}</td><td className="tsp-right tsp-mono">{fmtInt(m.sellAmt)}</td>
-                  <td className={`tsp-right tsp-mono ${changeCls(m.realizedPL)}`}>{m.realizedPL > 0 ? '+' : ''}{fmtInt(m.realizedPL)}</td><td className="tsp-right tsp-mono tsp-up">{m.dividend > 0 ? `+${fmtInt(m.dividend)}` : 0}</td>
-                  <td className={`tsp-right tsp-mono ${changeCls(netFlow)}`}>{netFlow > 0 ? '+' : ''}{fmtInt(netFlow)}</td>
-                  <td className="tsp-right"><button className="tsp-icon-btn" style={{ marginLeft: 'auto' }}>{isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button></td>
-                </tr>
-                {isExpanded && (
-                  <tr style={{ background: 'var(--panel-2)' }}>
-                    <td colSpan="8" style={{ padding: '16px 24px' }}>
-                      <h4 style={{ margin: '0 0 12px 0', fontSize: '14px', color: 'var(--muted)' }}>📅 {m.month} 資金與交易明細</h4>
-                      <table className="tsp-table" style={{ background: 'var(--panel)', borderRadius: '8px', overflow: 'hidden' }}>
-                        <thead><tr><th>日期</th><th>動作</th><th>標的 / 項目</th><th className="tsp-right">股數</th><th className="tsp-right">成交價/配息</th><th className="tsp-right">淨收付金額(含稅費)</th></tr></thead>
-                        <tbody>
-                          {m.events.map((e, i) => (
-                            <tr key={i}>
-                              <td className="tsp-mono">{e.date}</td>
-                              <td>{e.isCash ? (<span className={`tsp-badge ${e.type === 'deposit' ? 'tsp-up-bg tsp-up' : 'tsp-down-bg tsp-down'}`}>{e.type === 'deposit' ? '入金' : '出金'}</span>) : e.isDiv ? (<span className="tsp-badge tsp-up-bg tsp-up">領息</span>) : e.type === 'buy' ? (<span className="tsp-badge tsp-up-bg tsp-up">買進</span>) : (<span className="tsp-badge tsp-down-bg tsp-down">賣出</span>)}</td>
-                              <td>{e.isCash ? (e.note || '資金變動') : `${e.symbol} ${safeNameStr(e.name)}`}</td><td className="tsp-right tsp-mono">{e.isCash ? '-' : fmtInt(e.shares)}</td><td className="tsp-right tsp-mono">{e.isCash ? '-' : fmtPrice(e.isDiv ? e.cashPerShare : e.price)}</td>
-                              <td className="tsp-right tsp-mono">
-                                {e.isCash ? (<span className={e.type === 'deposit' ? 'tsp-up' : 'tsp-down'}>{e.type === 'deposit' ? '+' : '-'}{fmtInt(e.amount)}</span>) : e.isDiv ? (<span className="tsp-up">+{fmtInt(e.totalCash)}</span>) : e.type === 'buy' ? (<span className="tsp-down">-{fmtInt(e.shares * e.price + (e.fee||0) + (e.tax||0))}</span>) : (<span className="tsp-up">+{fmtInt(e.shares * e.price - (e.fee||0) - (e.tax||0))}</span>)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
+              <tr key={mo.month} className="tsp-clickable-row" onClick={() => setDetailMonth(mo.month)}>
+                <td className="tsp-mono"><b>{mo.month}</b></td><td className="tsp-right tsp-mono">{mo.count}</td><td className="tsp-right tsp-mono">{fmtInt(mo.buyAmt)}</td><td className="tsp-right tsp-mono">{fmtInt(mo.sellAmt)}</td>
+                <td className={`tsp-right tsp-mono ${changeCls(mo.realizedPL)}`}>{mo.realizedPL > 0 ? '+' : ''}{fmtInt(mo.realizedPL)}</td><td className="tsp-right tsp-mono tsp-up">{mo.dividend > 0 ? `+${fmtInt(mo.dividend)}` : 0}</td>
+                <td className={`tsp-right tsp-mono ${changeCls(nf)}`}>{nf > 0 ? '+' : ''}{fmtInt(nf)}</td>
+                <td className="tsp-right"><ChevronDown size={16} className="tsp-muted" /></td>
+              </tr>
             );
           })}
         </tbody>
       </table>
+
+      {m && (
+      <ModalPortal>
+        <div className="tsp-modal-backdrop" onClick={() => setDetailMonth(null)}>
+          <div className="tsp-modal" onClick={e => e.stopPropagation()}>
+            <div className="tsp-modal-head">
+              <h3>📅 {m.month} 資金與交易明細</h3>
+              <button type="button" className="tsp-icon-btn" onClick={() => setDetailMonth(null)}><X size={18} /></button>
+            </div>
+            <div style={{ padding: 20 }}>
+              <div className="tsp-data-card" style={{ marginBottom: 16 }}>
+                <div className="tsp-data-card-row"><span>交易次數</span><span>{m.count}</span></div>
+                <div className="tsp-data-card-row"><span>買入總額</span><span>{fmtInt(m.buyAmt)}</span></div>
+                <div className="tsp-data-card-row"><span>賣出總額</span><span>{fmtInt(m.sellAmt)}</span></div>
+                <div className="tsp-data-card-row"><span>已實現損益</span><span className={changeCls(m.realizedPL)}>{m.realizedPL > 0 ? '+' : ''}{fmtInt(m.realizedPL)}</span></div>
+                <div className="tsp-data-card-row"><span>領取股利</span><span className="tsp-up">{m.dividend > 0 ? `+${fmtInt(m.dividend)}` : 0}</span></div>
+                <div className="tsp-data-card-row"><span>月度淨現金流</span><span className={changeCls(netFlow)}>{netFlow > 0 ? '+' : ''}{fmtInt(netFlow)}</span></div>
+              </div>
+              <p className="tsp-hint" style={{ margin: '0 0 8px' }}>交易與資金明細</p>
+              {m.events.map((e, i) => (
+                <div key={i} className="tsp-data-subcard">
+                  <div className="tsp-data-card-row">
+                    <span className="tsp-mono">{e.date}</span>
+                    <span>{e.isCash ? (<span className={`tsp-badge ${e.type === 'deposit' ? 'tsp-up-bg tsp-up' : 'tsp-down-bg tsp-down'}`}>{e.type === 'deposit' ? '入金' : '出金'}</span>) : e.isDiv ? (<span className="tsp-badge tsp-up-bg tsp-up">領息</span>) : e.type === 'buy' ? (<span className="tsp-badge tsp-up-bg tsp-up">買進</span>) : (<span className="tsp-badge tsp-down-bg tsp-down">賣出</span>)}</span>
+                  </div>
+                  <div className="tsp-data-card-row"><span>{e.isCash ? (e.note || '資金變動') : `${e.symbol} ${safeNameStr(e.name)}`}</span><span>{e.isCash ? '-' : `${fmtInt(e.shares)} 股`}</span></div>
+                  <div className="tsp-data-card-row">
+                    <span>淨收付金額</span>
+                    <span>{e.isCash ? (<span className={e.type === 'deposit' ? 'tsp-up' : 'tsp-down'}>{e.type === 'deposit' ? '+' : '-'}{fmtInt(e.amount)}</span>) : e.isDiv ? (<span className="tsp-up">+{fmtInt(e.totalCash)}</span>) : e.type === 'buy' ? (<span className="tsp-down">-{fmtInt(e.shares * e.price + (e.fee||0) + (e.tax||0))}</span>) : (<span className="tsp-up">+{fmtInt(e.shares * e.price - (e.fee||0) - (e.tax||0))}</span>)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </ModalPortal>
+      )}
     </div>
   );
 }
 
 function Compare({ data, safeNameStr }) {
+  const [detailOwner, setDetailOwner] = useState(null);
   if (data.length <= 1) return <Empty text="需有多個持有者才能進行比較。" />;
+  const sorted = [...data].sort((a, b) => b.marketValue - a.marketValue);
+  const d = detailOwner ? sorted.find(x => x.owner === detailOwner) : null;
+  const dUplPct = d && d.cost > 0 ? (d.upl / d.cost) * 100 : 0;
   return (
     <div className="tsp-card tsp-table-wrap">
       <table className="tsp-table">
         <thead><tr><th>持有者</th><th className="tsp-right">持股檔數</th><th className="tsp-right">持股市值</th><th className="tsp-right">戶頭現金</th><th className="tsp-right">總資產</th><th className="tsp-right">總成本</th><th className="tsp-right">未實現損益</th><th className="tsp-right">已實現損益</th></tr></thead>
         <tbody>
-          {data.sort((a, b) => b.marketValue - a.marketValue).map(d => {
-            const uplPct = d.cost > 0 ? (d.upl / d.cost) * 100 : 0;
+          {sorted.map(row => {
+            const uplPct = row.cost > 0 ? (row.upl / row.cost) * 100 : 0;
             return (
-              <tr key={d.owner}>
-                <td><Tag text={d.owner} /></td><td className="tsp-right tsp-mono">{d.holdingCount}</td><td className="tsp-right tsp-mono">{fmtInt(d.marketValue)}</td><td className="tsp-right tsp-mono">{fmtInt(d.cash)}</td><td className="tsp-right tsp-mono tsp-primary" style={{fontWeight: 'bold'}}>{fmtInt(d.marketValue + d.cash)}</td><td className="tsp-right tsp-mono">{fmtInt(d.cost)}</td>
-                <td className={`tsp-right tsp-mono ${changeCls(d.upl)}`}><div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}><div>{d.upl > 0 ? '+' : ''}{fmtInt(d.upl)}</div><div style={{ fontSize: 12 }}>{pct(uplPct)}</div></div></td>
-                <td className={`tsp-right tsp-mono ${changeCls(d.realized)}`}>{d.realized > 0 ? '+' : ''}{fmtInt(d.realized)}</td>
+              <tr key={row.owner} className="tsp-clickable-row" onClick={() => setDetailOwner(row.owner)}>
+                <td><Tag text={row.owner} /></td><td className="tsp-right tsp-mono">{row.holdingCount}</td><td className="tsp-right tsp-mono">{fmtInt(row.marketValue)}</td><td className="tsp-right tsp-mono">{fmtInt(row.cash)}</td><td className="tsp-right tsp-mono tsp-primary" style={{fontWeight: 'bold'}}>{fmtInt(row.marketValue + row.cash)}</td><td className="tsp-right tsp-mono">{fmtInt(row.cost)}</td>
+                <td className={`tsp-right tsp-mono ${changeCls(row.upl)}`}><div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-end'}}><div>{row.upl > 0 ? '+' : ''}{fmtInt(row.upl)}</div><div style={{ fontSize: 12 }}>{pct(uplPct)}</div></div></td>
+                <td className={`tsp-right tsp-mono ${changeCls(row.realized)}`}>{row.realized > 0 ? '+' : ''}{fmtInt(row.realized)}</td>
               </tr>
             )
           })}
         </tbody>
       </table>
+
+      {d && (
+      <ModalPortal>
+        <div className="tsp-modal-backdrop" onClick={() => setDetailOwner(null)}>
+          <div className="tsp-modal" onClick={e => e.stopPropagation()}>
+            <div className="tsp-modal-head">
+              <h3><Tag text={d.owner} /> 持有明細</h3>
+              <button type="button" className="tsp-icon-btn" onClick={() => setDetailOwner(null)}><X size={18} /></button>
+            </div>
+            <div style={{ padding: 20 }}>
+              <div className="tsp-data-card">
+                <div className="tsp-data-card-row"><span>持股檔數</span><span>{d.holdingCount}</span></div>
+                <div className="tsp-data-card-row"><span>持股市值</span><span>{fmtInt(d.marketValue)}</span></div>
+                <div className="tsp-data-card-row"><span>戶頭現金</span><span>{fmtInt(d.cash)}</span></div>
+                <div className="tsp-data-card-row"><span>總資產</span><span className="tsp-primary" style={{ fontWeight: 'bold' }}>{fmtInt(d.marketValue + d.cash)}</span></div>
+                <div className="tsp-data-card-row"><span>總成本</span><span>{fmtInt(d.cost)}</span></div>
+                <div className="tsp-data-card-row"><span>未實現損益</span><span className={changeCls(d.upl)}>{d.upl > 0 ? '+' : ''}{fmtInt(d.upl)}（{pct(dUplPct)}）</span></div>
+                <div className="tsp-data-card-row"><span>已實現損益</span><span className={changeCls(d.realized)}>{d.realized > 0 ? '+' : ''}{fmtInt(d.realized)}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </ModalPortal>
+      )}
     </div>
   );
 }
@@ -2038,9 +2289,9 @@ const CSS = `
 .tsp-brand { display: flex; align-items: center; gap: 16px; }
 .tsp-brand-mark { background: var(--primary); color: white; width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; }
 .tsp-brand h1 { margin: 0; font-size: 22px; font-weight: 700; } .tsp-brand p { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
-.tsp-header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 10; }
+.tsp-header-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 30; }
 .tsp-owner-select { position: relative; display: flex; align-items: center; gap: 8px; background: var(--panel); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border); }
-.tsp-owner-form { position: absolute; top: 100%; right: 0; margin-top: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; gap: 8px; box-shadow: var(--shadow); z-index: 10; }
+.tsp-owner-form { position: absolute; top: 100%; right: 0; margin-top: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; gap: 8px; box-shadow: var(--shadow); z-index: 30; }
 .tsp-tabs { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 1200px; margin: 0 auto; padding: 0 16px 16px 16px; position: relative; z-index: 20; }
 .tsp-tab { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 14px; color: var(--muted); font-weight: 600; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex: 1 1 calc(33.333% - 12px); text-align: center; }
 .tsp-tab:hover { color: var(--text); border-color: var(--muted); } .tsp-tab.active { background: var(--primary); color: white; border-color: var(--primary); }
@@ -2059,7 +2310,15 @@ const CSS = `
 .tsp-dashboard-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; } @media(max-width: 768px) { .tsp-dashboard-bottom { grid-template-columns: 1fr; } }
 .tsp-panel { padding: 20px; } .tsp-panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; } .tsp-panel-head h3 { margin: 0; font-size: 16px; }
 .tsp-toggle-group { display: flex; background: var(--panel-2); border-radius: 8px; padding: 4px; } .tsp-toggle-group button { background: transparent; border: none; padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--muted); border-radius: 6px; cursor: pointer; transition: 0.2s; min-height: 30px; } .tsp-toggle-group button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.1); }
-.tsp-table-wrap { overflow-x: auto; width: 100%; box-sizing: border-box; padding-bottom: 8px; -webkit-overflow-scrolling: touch; } .tsp-table { width: 100%; min-width: 1050px; border-collapse: collapse; text-align: left; font-size: 14px; } .tsp-table th { background: var(--panel-2); padding: 12px 14px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; } .tsp-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; background: var(--panel); } .tsp-table tr:last-child td { border-bottom: none; } .tsp-table tbody tr { transition: background 0.2s; } .tsp-table tbody tr:nth-child(even) td { background: var(--panel-2); } .tsp-table tbody tr.tsp-row-warn td { background: rgba(239, 68, 68, 0.06); } .tsp-clickable-row:hover td, .tsp-row-hover:hover td { background: var(--border) !important; } .tsp-clickable-row { cursor: pointer; } .tsp-right { text-align: right; } .tsp-row-warn { background: rgba(239, 68, 68, 0.05) !important; }
+.tsp-table-wrap { overflow-x: auto; width: 100%; box-sizing: border-box; padding-bottom: 8px; -webkit-overflow-scrolling: touch; } .tsp-table { width: 100%; min-width: 1050px; border-collapse: separate; border-spacing: 0; text-align: left; font-size: 14px; } .tsp-table th { background: var(--panel-2); padding: 12px 14px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; } .tsp-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; background: var(--panel); } .tsp-table tr:last-child td { border-bottom: none; } .tsp-table tbody tr { transition: background 0.2s; } .tsp-table tbody tr:nth-child(even) td { background: var(--panel-2); } .tsp-table tbody tr.tsp-row-warn td { background: rgba(239, 68, 68, 0.06); } .tsp-clickable-row:hover td, .tsp-row-hover:hover td { background: var(--border) !important; } .tsp-clickable-row { cursor: pointer; } .tsp-right { text-align: right; } .tsp-row-warn { background: rgba(239, 68, 68, 0.05) !important; }
+.tsp-card-list { display: flex; flex-direction: column; gap: 12px; padding: 4px; }
+.tsp-data-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.tsp-data-subcard { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.tsp-data-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: bold; font-size: 15px; }
+.tsp-data-card-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; font-size: 13px; border-top: 1px dashed var(--border); }
+.tsp-data-card-row:first-of-type { border-top: none; padding-top: 0; }
+.tsp-data-card-row > span:first-child { color: var(--muted); flex-shrink: 0; }
+.tsp-data-card-row > span:last-child { font-family: var(--font-mono); text-align: right; }
 .tsp-table th:first-child, .tsp-table td:first-child { position: sticky; left: 0; z-index: 2; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
 .tsp-table th:first-child { z-index: 3; }
 .th-category { min-width: 150px; } .th-alerts { min-width: 200px; }
@@ -2068,6 +2327,7 @@ const CSS = `
 .tsp-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(2px); padding: 16px; } .tsp-modal { background: var(--panel); border-radius: var(--radius); width: 100%; max-width: 500px; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1); max-height: 90vh; overflow-y: auto; } .tsp-modal-head { display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--border); } .tsp-modal-head h3 { margin: 0; font-size: 18px; } .tsp-form { padding: 20px; display: flex; flex-direction: column; gap: 16px; } .tsp-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); } .tsp-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .tsp-textarea { resize: vertical; min-height: 120px; font-family: var(--font-mono); } .tsp-form-submit { margin-top: 8px; justify-content: center; padding: 12px; } .tsp-hint { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.5; }
 .tsp-type-toggle { display: flex; gap: 8px; margin-bottom: 8px; } .tsp-type-toggle button { flex: 1; padding: 12px; border: 2px solid var(--border); background: transparent; border-radius: 8px; font-weight: bold; cursor: pointer; color: var(--muted); transition: 0.2s; } .tsp-type-toggle button.active { border-color: currentColor; }
 .tsp-empty { padding: 48px 24px; text-align: center; color: var(--muted); font-size: 15px; } .tsp-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--muted); height: 100vh; font-size: 16px; font-weight: bold; } .tsp-spin { animation: tsp-spin 1s linear infinite; } @keyframes tsp-spin { 100% { transform: rotate(360deg); } } .tsp-toast { position: fixed; bottom: 24px; right: 24px; background: var(--primary); color: white; padding: 12px 24px; border-radius: 8px; box-shadow: var(--shadow); z-index: 1000; animation: tsp-slide-up 0.3s ease-out; font-weight: bold; letter-spacing: 0.5px; } @keyframes tsp-slide-up { 0% { transform: translateY(100%); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+.tsp-back-to-top { position: fixed; bottom: 24px; left: 24px; width: 46px; height: 46px; border-radius: 50%; background: var(--primary); color: white; border: none; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); cursor: pointer; z-index: 999; transition: transform 0.15s, background 0.15s; } .tsp-back-to-top:hover { background: var(--primary-hover); transform: translateY(-2px); }
 .tsp-pie-wrap { display: flex; flex-direction: column; align-items: center; } .tsp-legend { width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; margin-top: 16px; } .tsp-legend-item { display: flex; align-items: center; gap: 8px; font-size: 13px; } .tsp-dot { width: 10px; height: 10px; border-radius: 50%; }
 .tsp-alerts-list { display: flex; flex-direction: column; gap: 12px; } .tsp-alert-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; }
 .tsp-filters { padding: 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); background: var(--panel-2); flex-wrap: wrap; } .tsp-filters select { width: 160px; }
