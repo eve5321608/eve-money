@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -374,10 +374,7 @@ export default function App() {
   const [showOwnerForm, setShowOwnerForm] = useState(false);
   const [showOwnerManage, setShowOwnerManage] = useState(false);
   const [ownerInput, setOwnerInput] = useState('');
-  const [tab, setTabInternal] = useState('dashboard');
-  const [visualTab, setVisualTab] = useState('dashboard');
-  const [isTabPending, startTabTransition] = useTransition();
-  const setTab = (id) => { setVisualTab(id); startTabTransition(() => setTabInternal(id)); };
+  const [tab, setTab] = useState('dashboard');
   
   const [showForm, setShowForm] = useState(false);
   const [showCashForm, setShowCashForm] = useState(false);
@@ -1237,11 +1234,11 @@ export default function App() {
 
       <nav className="tsp-tabs">
         {activeTabsList.map((t) => (
-          <button key={t.id} className={`tsp-tab ${visualTab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
+          <button key={t.id} className={`tsp-tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
       </nav>
 
-      <main className="tsp-main" key={tab} style={{ animation: 'tspFadeIn 0.25s ease-out forwards', opacity: isTabPending ? 0.5 : 1, transition: 'opacity 0.15s' }}>
+      <main className="tsp-main" key={tab} style={{ animation: 'tspFadeIn 0.25s ease-out forwards' }}>
         {tab === 'dashboard' && <Dashboard totals={totals} holdings={holdingsAll} meta={meta} groupMode={groupMode} setGroupMode={setGroupMode} alerts={alerts} performance={performance} benchmarkStart={benchmarkStart} setBenchmarkStart={setBenchmarkStart} benchmarkEnd={benchmarkEnd} setBenchmarkEnd={setBenchmarkEnd} benchmarkReturnPct={benchmarkReturnPct} />}
         {tab === 'holdings' && <Holdings holdings={holdings} priceDraft={priceDraft} setPriceDraft={setPriceDraft} updatePrice={updatePrice} updateMeta={updateMeta} strategyFilter={strategyFilter} setStrategyFilter={setStrategyFilter} sectorFilter={sectorFilter} setSectorFilter={setSectorFilter} sectorOptions={sectorOptions} strategyOptions={strategyOptions} chainStageFilter={chainStageFilter} setChainStageFilter={setChainStageFilter} chainStageOptions={chainStageOptions} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onAtrCalculate={handleAtrCalculation} safeNameStr={safeNameStr} />}
         {tab === 'txns' && <Transactions transactions={selectedOwner === 'all' ? transactions : filteredTxns} onEdit={handleEditTxn} onCopy={handleCopyTxn} onDelete={deleteTxn} showOwner={owners.length > 1} safeNameStr={safeNameStr} />}
