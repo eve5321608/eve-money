@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -374,7 +374,10 @@ export default function App() {
   const [showOwnerForm, setShowOwnerForm] = useState(false);
   const [showOwnerManage, setShowOwnerManage] = useState(false);
   const [ownerInput, setOwnerInput] = useState('');
-  const [tab, setTab] = useState('dashboard');
+  const [tab, setTabInternal] = useState('dashboard');
+  const [visualTab, setVisualTab] = useState('dashboard');
+  const [isTabPending, startTabTransition] = useTransition();
+  const setTab = (id) => { setVisualTab(id); startTabTransition(() => setTabInternal(id)); };
   
   const [showForm, setShowForm] = useState(false);
   const [showCashForm, setShowCashForm] = useState(false);
@@ -1234,11 +1237,11 @@ export default function App() {
 
       <nav className="tsp-tabs">
         {activeTabsList.map((t) => (
-          <button key={t.id} className={`tsp-tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
+          <button key={t.id} className={`tsp-tab ${visualTab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
       </nav>
 
-      <main className="tsp-main" key={tab} style={{ animation: 'tspFadeIn 0.25s ease-out forwards' }}>
+      <main className="tsp-main" key={tab} style={{ animation: 'tspFadeIn 0.25s ease-out forwards', opacity: isTabPending ? 0.5 : 1, transition: 'opacity 0.15s' }}>
         {tab === 'dashboard' && <Dashboard totals={totals} holdings={holdingsAll} meta={meta} groupMode={groupMode} setGroupMode={setGroupMode} alerts={alerts} performance={performance} benchmarkStart={benchmarkStart} setBenchmarkStart={setBenchmarkStart} benchmarkEnd={benchmarkEnd} setBenchmarkEnd={setBenchmarkEnd} benchmarkReturnPct={benchmarkReturnPct} />}
         {tab === 'holdings' && <Holdings holdings={holdings} priceDraft={priceDraft} setPriceDraft={setPriceDraft} updatePrice={updatePrice} updateMeta={updateMeta} strategyFilter={strategyFilter} setStrategyFilter={setStrategyFilter} sectorFilter={sectorFilter} setSectorFilter={setSectorFilter} sectorOptions={sectorOptions} strategyOptions={strategyOptions} chainStageFilter={chainStageFilter} setChainStageFilter={setChainStageFilter} chainStageOptions={chainStageOptions} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onAtrCalculate={handleAtrCalculation} safeNameStr={safeNameStr} />}
         {tab === 'txns' && <Transactions transactions={selectedOwner === 'all' ? transactions : filteredTxns} onEdit={handleEditTxn} onCopy={handleCopyTxn} onDelete={deleteTxn} showOwner={owners.length > 1} safeNameStr={safeNameStr} />}
@@ -2323,7 +2326,7 @@ const CSS = `
 .tsp-table th:first-child { z-index: 3; }
 .th-category { min-width: 150px; } .th-alerts { min-width: 200px; }
 @media (max-width: 768px) { .tsp-header { flex-direction: column; align-items: stretch; gap: 16px; margin-bottom: 12px; } .tsp-header-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; } .tsp-header-actions > .tsp-owner-select { grid-column: 1 / -1; } .tsp-btn { justify-content: center; padding: 10px; } .tsp-filters { flex-direction: column; align-items: stretch !important; gap: 12px; } .tsp-filters > div, .tsp-filters select { width: 100%; max-width: 100%; } }
-.tsp-symbol { font-weight: 700; font-size: 15px; } .tsp-name { font-size: 12px; white-space: normal; min-width: 80px; } .tsp-price-input { display: flex; align-items: center; gap: 4px; justify-content: flex-end; } .tsp-price-input input { width: 80px; text-align: right; } .tsp-meta-inputs { display: flex; flex-direction: column; gap: 6px; } .tsp-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+.tsp-symbol { font-weight: 700; font-size: 15px; white-space: nowrap; } .tsp-name { font-size: 12px; white-space: normal; min-width: 80px; } .tsp-price-input { display: flex; align-items: center; gap: 4px; justify-content: flex-end; } .tsp-price-input input { width: 80px; text-align: right; } .tsp-meta-inputs { display: flex; flex-direction: column; gap: 6px; } .tsp-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
 .tsp-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(2px); padding: 16px; } .tsp-modal { background: var(--panel); border-radius: var(--radius); width: 100%; max-width: 500px; box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1); max-height: 90vh; overflow-y: auto; } .tsp-modal-head { display: flex; justify-content: space-between; align-items: center; padding: 20px; border-bottom: 1px solid var(--border); } .tsp-modal-head h3 { margin: 0; font-size: 18px; } .tsp-form { padding: 20px; display: flex; flex-direction: column; gap: 16px; } .tsp-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); } .tsp-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .tsp-textarea { resize: vertical; min-height: 120px; font-family: var(--font-mono); } .tsp-form-submit { margin-top: 8px; justify-content: center; padding: 12px; } .tsp-hint { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.5; }
 .tsp-type-toggle { display: flex; gap: 8px; margin-bottom: 8px; } .tsp-type-toggle button { flex: 1; padding: 12px; border: 2px solid var(--border); background: transparent; border-radius: 8px; font-weight: bold; cursor: pointer; color: var(--muted); transition: 0.2s; } .tsp-type-toggle button.active { border-color: currentColor; }
 .tsp-empty { padding: 48px 24px; text-align: center; color: var(--muted); font-size: 15px; } .tsp-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--muted); height: 100vh; font-size: 16px; font-weight: bold; } .tsp-spin { animation: tsp-spin 1s linear infinite; } @keyframes tsp-spin { 100% { transform: rotate(360deg); } } .tsp-toast { position: fixed; bottom: 24px; right: 24px; background: var(--primary); color: white; padding: 12px 24px; border-radius: 8px; box-shadow: var(--shadow); z-index: 1000; animation: tsp-slide-up 0.3s ease-out; font-weight: bold; letter-spacing: 0.5px; } @keyframes tsp-slide-up { 0% { transform: translateY(100%); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
